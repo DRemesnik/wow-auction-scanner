@@ -47,7 +47,7 @@ jobs:
             git worktree add --orphan -b gh-pages _pages
           fi
 
-      - name: Initialize DB and static metadata if needed
+      - name: Initialize DB and fetch/sync AH data
         env:
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
@@ -55,18 +55,16 @@ jobs:
         run: |
           if [ ! -f data/ah_tracker.sqlite ]; then
             python -m tracker.cli init-db
-            python -m tracker.cli sync-static --media --workers 8
-          elif [ "${{ github.event.inputs.sync_static }}" = "true" ]; then
-            python -m tracker.cli sync-static --media --workers 8
+            python -m tracker.cli fetch-api
+            python -m tracker.cli sync-static --workers 12
+            python -m tracker.cli sync-static --media --workers 12
+          else
+            if [ "${{ github.event.inputs.sync_static }}" = "true" ]; then
+              python -m tracker.cli sync-static --workers 12
+              python -m tracker.cli sync-static --media --workers 12
+            fi
+            python -m tracker.cli fetch-api
           fi
-
-      - name: Fetch Blizzard AH snapshot and rebuild dashboard
-        env:
-          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
-          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
-          PYTHONPATH: src
-        run: |
-          python -m tracker.cli fetch-api
 
       - name: Publish dashboard and DB to gh-pages
         run: |

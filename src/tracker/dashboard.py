@@ -390,6 +390,7 @@ def build_dashboard_data(
         ).fetchone()
 
     items_out: list[DashboardItemRow] = []
+    history_map: dict[str, list[list[Any]]] = {}
     if latest_snap is not None:
         snap_id = int(latest_snap["snapshot_id"])
         all_obs = conn.execute(
