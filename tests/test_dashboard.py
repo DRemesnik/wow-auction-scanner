@@ -18,15 +18,19 @@ def test_dashboard_current_craft_cost_and_profit(tmp_path: Path) -> None:
     # Mooncloth (14342) = 2x Felcloth (14256)
     # Felcloth = 10_000c -> craft cost = 20_000c
     # Mooncloth AH min = 50_000c -> after 5% fee = 47_500c -> profit = 27_500c
-    # 4 lots x 5 qty = 20 total_available, sample_size=4 -> liquid КРАФТИТЬ
+    # 8 lots x 3 qty = 24 total_available, sample_size=8 -> high-conviction КРАФТИТЬ
     save_snapshot(
         conn,
         [
             NormalizedLot(14256, 10_000, 10),
-            NormalizedLot(14342, 50_000, 5),
-            NormalizedLot(14342, 52_000, 5),
-            NormalizedLot(14342, 54_000, 5),
-            NormalizedLot(14342, 55_000, 5),
+            NormalizedLot(14342, 50_000, 3),
+            NormalizedLot(14342, 51_000, 3),
+            NormalizedLot(14342, 52_000, 3),
+            NormalizedLot(14342, 52_500, 3),
+            NormalizedLot(14342, 53_000, 3),
+            NormalizedLot(14342, 53_500, 3),
+            NormalizedLot(14342, 54_000, 3),
+            NormalizedLot(14342, 55_000, 3),
             # Low-liquidity high-price item (1 lot at 300g) -> must be НЕЛИКВИД
             NormalizedLot(14048, 2_000, 10),
             NormalizedLot(14341, 4_000, 10),
@@ -46,10 +50,12 @@ def test_dashboard_current_craft_cost_and_profit(tmp_path: Path) -> None:
     assert mooncloth.craft_profit_copper == 27_500
     assert mooncloth.roi_pct == 137.5
     assert mooncloth.trade_signal == "КРАФТИТЬ"
+    assert mooncloth.signal_score >= 65
     assert mooncloth.liquidity_label in ("Средняя", "Высокая")
 
     bag = next(i for i in data["items"] if i.item_id == 14155)
     assert bag.trade_signal == "НЕЛИКВИД"
+    assert bag.signal_score <= 30
 
     out_html = generate_dashboard_file(conn, tmp_path / "dashboard.html", house_id=113)
     text = out_html.read_text(encoding="utf-8")

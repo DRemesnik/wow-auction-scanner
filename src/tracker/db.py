@@ -31,7 +31,10 @@ CREATE TABLE IF NOT EXISTS items (
     name_ru TEXT NOT NULL,
     name_en TEXT NOT NULL,
     category TEXT NOT NULL CHECK (category IN ('essence', 'recipe', 'cloth', 'crate', 'bar', 'other')),
-    vendor_price_copper INTEGER
+    vendor_price_copper INTEGER,
+    icon_url TEXT,
+    description_ru TEXT,
+    quality TEXT
 );
 
 CREATE TABLE IF NOT EXISTS auction_observations (
@@ -320,6 +323,12 @@ def connect_db(db_path: str | Path) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection, *, with_seed: bool = True) -> None:
     """Initialize SQLite schema and optionally populate seed items/recipes."""
     conn.executescript(SCHEMA_SQL)
+    existing_cols = {
+        str(r["name"]) for r in conn.execute("PRAGMA table_info(items)").fetchall()
+    }
+    for col, col_type in (("icon_url", "TEXT"), ("description_ru", "TEXT"), ("quality", "TEXT")):
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE items ADD COLUMN {col} {col_type}")
     if with_seed:
         seed_reference_data(conn)
     conn.commit()

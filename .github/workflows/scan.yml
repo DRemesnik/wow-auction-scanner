@@ -1,0 +1,81 @@
+name: WoW Forever AH Scan
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      sync_static:
+        description: "Also run sync-static --media before fetch-api"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wow-ah-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore persisted DB from gh-pages
+        run: |
+          mkdir -p _pages data
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages --depth=1
+            git worktree add _pages origin/gh-pages
+            if [ -f _pages/ah_tracker.sqlite ]; then
+              cp _pages/ah_tracker.sqlite data/ah_tracker.sqlite
+            fi
+          else
+            git worktree add --orphan -b gh-pages _pages
+          fi
+
+      - name: Initialize DB and static metadata if needed
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          PYTHONPATH: src
+        run: |
+          if [ ! -f data/ah_tracker.sqlite ]; then
+            python -m tracker.cli init-db
+            python -m tracker.cli sync-static --media --workers 8
+          elif [ "${{ github.event.inputs.sync_static }}" = "true" ]; then
+            python -m tracker.cli sync-static --media --workers 8
+          fi
+
+      - name: Fetch Blizzard AH snapshot and rebuild dashboard
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          PYTHONPATH: src
+        run: |
+          python -m tracker.cli fetch-api
+
+      - name: Publish dashboard and DB to gh-pages
+        run: |
+          cp data/dashboard.html _pages/index.html
+          cp data/ah_tracker.sqlite _pages/ah_tracker.sqlite
+          cd _pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html ah_tracker.sqlite
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update AH snapshot $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push origin HEAD:gh-pages
+          fi

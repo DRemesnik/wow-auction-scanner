@@ -12,7 +12,7 @@ from .config import TrackerConfig, format_copper, infer_window_tag
 from .dashboard import generate_dashboard_file
 from .db import connect_db, init_db, save_snapshot
 from .lua_parser import load_saved_variables
-from .static_sync import sync_craft_recipes, sync_item_names
+from .static_sync import sync_craft_recipes, sync_item_media_and_descriptions, sync_item_names
 
 
 def _build_name_to_id_map(conn) -> dict[str, int]:
@@ -270,6 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync = sub.add_parser("sync-static", help="Sync Russian item names and profession recipes from Blizzard API")
     p_sync.add_argument("--items-only", action="store_true", help="Sync only missing item names")
     p_sync.add_argument("--recipes-only", action="store_true", help="Sync only profession craft recipes")
+    p_sync.add_argument("--media", action="store_true", help="Sync item icons and descriptions")
     p_sync.add_argument("--workers", type=int, default=20, help="Concurrent API workers (default: 20)")
 
     return parser
@@ -288,10 +289,13 @@ def cmd_sync_static(args: argparse.Namespace, cfg: TrackerConfig) -> int:
     )
     with connect_db(cfg.db_path) as conn:
         init_db(conn, with_seed=True)
-        if not args.recipes_only:
+        if args.media:
+            mcnt = sync_item_media_and_descriptions(conn, client, max_workers=args.workers)
+            print(f"Synced item media/descriptions: updated={mcnt}")
+        elif not args.recipes_only:
             upd, fail = sync_item_names(conn, client, max_workers=args.workers)
             print(f"Synced item names: updated={upd}, unresolved={fail}")
-        if not args.items_only:
+        if not args.items_only and not args.media:
             cnt = sync_craft_recipes(conn, client, max_workers=args.workers)
             print(f"Synced craft recipes: saved={cnt}")
         out = generate_dashboard_file(conn, Path("data/dashboard.html"), house_id=cfg.house_id)

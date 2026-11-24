@@ -16,6 +16,7 @@ description: Rules and verified workflows for the WoW: Forever EU Horde Auction 
 - Dynamic namespace: `dynamic-forever-eu`
 - Static namespace: `static-forever-eu`
 - EU PvP Horde Auction House: `ruleset_id = 1`, `house_id = 113` (verified against in-game AH).
+- **WoW: Forever Profession Specifics:** Healing potions and discolored healing potions (`118, 858, 1710, 3928, 4596, 13446, 241650, 247239..247242`) belong to **Первая помощь** (First Aid), NOT Alchemy, even if Blizzard's static API tags some of the discolored recipes as Alchemy.
 - All monetary values in SQLite and analytics must remain strictly integer copper (`int`); convert to `g / s / c` only for display.
 
 ## 3. Execution & Editing Discipline

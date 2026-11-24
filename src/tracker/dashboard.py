@@ -69,12 +69,10 @@ CRAFT_RECIPES: dict[int, tuple[tuple[int, int], ...]] = {
     13452: ((13465, 2), (13466, 2), (8925, 1)),                # Эликсир мангуста
     13454: ((13463, 3), (13465, 1), (8925, 1)),                # Сильный эликсир тайной магии
     5634:  ((6358, 2), (3356, 1), (3372, 1)),                  # Зелье свободного действия
-    13444: ((13463, 3), (13467, 2), (8925, 1)),                # Сильное зелье маны
-    13446: ((13464, 2), (13465, 1), (8925, 1)),                # Сильное лечебное зелье
-    13455: ((13423, 3), (3821, 1), (8925, 1)),                 # Настойка каменного щита
-    6149:  ((3358, 1), (3821, 1), (3372, 1)),                  # Большое зелье маны
-    3928:  ((8838, 1), (3358, 1), (8925, 1)),                  # Наилучшее лечебное зелье
-    13443: ((8838, 2), (8839, 2), (8925, 1)),                  # Наилучшее зелье маны
+    13444: ((13463, 3), (13467, 2), (8925, 1)),                # Сильнейшее зелье маны
+    13455: ((13423, 3), (3821, 1), (8925, 1)),                 # Сильное зелье каменного щита
+    6149:  ((3358, 1), (3821, 1), (3372, 1)),                  # Сильное зелье маны
+    13443: ((8838, 2), (8839, 2), (8925, 1)),                  # Высшее зелье маны
     9030:  ((7067, 1), (3821, 1), (8925, 1)),                  # Зелье восстановления
     9036:  ((3358, 1), (4625, 1), (8925, 1)),                  # Зелье защиты от магии
     9144:  ((8153, 1), (4625, 1), (8925, 1)),                  # Зелье дикой лозы
@@ -119,10 +117,15 @@ class DashboardItemRow:
     craft_profit_copper: int | None
     roi_pct: float | None
     trade_signal: str
+    signal_score: int
+    signal_reason: str
     liquidity_label: str
     sample_size: int
     reagents_text: str
     total_available: int
+    icon_url: str | None = None
+    description_ru: str | None = None
+    quality: str | None = None
 
 
 def _classify_liquidity(avail: int, sample_size: int, current_min: int | None) -> str:
@@ -135,42 +138,115 @@ def _classify_liquidity(avail: int, sample_size: int, current_min: int | None) -
     return "Низкая"
 
 
-def _compute_trade_signal(
+def _evaluate_trade_decision(
     *,
     current_min: int | None,
     p25: int | None,
+    median: int | None,
     craft_cost: int | None,
     craft_profit: int | None,
     roi_pct: float | None,
     avail: int,
     sample_size: int,
-    is_craftable: bool,
-) -> str:
-    """Determine a liquidity-aware trade signal from current snapshot prices and craft margins."""
+    history_pts: list[list] | None = None,
+) -> tuple[str, int, str]:
+    """Compute `(signal, score_0_100, reason)` using liquidity, margin, book stability, and velocity."""
     liq = _classify_liquidity(avail, sample_size, current_min)
+    reasons: list[str] = []
 
-    # Low liquidity or thin-book high-price items (e.g. 1-2 listings at 300g+) are flagged as illiquid
+    # 1. Liquidity & Depth (0..35)
+    if sample_size >= 15 and avail >= 40:
+        liq_score = 35
+        reasons.append(f"глубокий рынок ({sample_size} лотов, {avail} шт.)")
+    elif sample_size >= 8 and avail >= 20:
+        liq_score = 28
+        reasons.append(f"высокая ликвидность ({sample_size} лотов)")
+    elif sample_size >= 4 and avail >= 10:
+        liq_score = 18
+        reasons.append(f"средняя ликвидность ({sample_size} лотов)")
+    else:
+        liq_score = 5 if avail >= 5 else 0
+
+    # 2. Order-book stability: median / p25 (0..15)
+    stab_score = 0
+    if p25 and median and p25 > 0:
+        ratio = median / p25
+        if ratio <= 1.4:
+            stab_score = 15
+            reasons.append("плотный стакан")
+        elif ratio <= 2.0:
+            stab_score = 8
+        else:
+            reasons.append("широкий разброс цен")
+
+    # 3. Cross-snapshot demand velocity & oversupply / dumping check (-20..+15)
+    vel_score = 0
+    is_dumping = False
+    if history_pts and len(history_pts) >= 2:
+        first_min, first_avail = history_pts[0][1], history_pts[0][4]
+        prev_min, prev_avail = history_pts[-2][1], history_pts[-2][4]
+        cur_min_h, cur_avail_h = history_pts[-1][1], history_pts[-1][4]
+
+        # Price dumping check: >=8% drop from earliest snapshot with high supply
+        if first_min > 0 and cur_min_h < first_min * 0.92 and cur_avail_h >= 20:
+            is_dumping = True
+            vel_score -= 20
+            reasons.append("демпинг: цена падает")
+        elif cur_avail_h < prev_avail and cur_min_h >= prev_min * 0.98:
+            vel_score += 15
+            reasons.append("спрос: остатки уходят")
+        elif len(history_pts) >= 3 and cur_avail_h >= first_avail and cur_min_h <= first_min:
+            vel_score -= 10
+            reasons.append("затоваривание: остатки стоят")
+        elif cur_avail_h != prev_avail:
+            vel_score += 5
+
+    # 3b. Non-stackable 1-unit-per-lot competition penalty (e.g. 64 bags fighting for 1st slot)
+    is_crowded_singles = sample_size >= 30 and avail == sample_size
+    if is_crowded_singles:
+        vel_score -= 15
+        reasons.append(f"конкуренция {sample_size} лотов по 1 шт.")
+
+    # Low liquidity guard: never recommend heavy crafting on thin books
     if liq == "Низкая":
         if craft_profit is not None and craft_profit > 0:
-            return "НЕЛИКВИД"
+            return "НЕЛИКВИД", min(30, liq_score + stab_score), f"риск зависания: {avail} шт., {sample_size} лот."
         if craft_profit is not None and craft_profit <= 0:
-            return "УБЫТОЧНО"
-        return "—"
+            return "УБЫТОЧНО", 0, "отрицательная маржа и низкая ликвидность"
+        return "—", 0, "нет крафта"
 
+    # 4. Snipe / Arbitrage check (requires >=25s net flip profit & real depth)
     if current_min is not None and p25 is not None and p25 > 0 and avail >= 10 and sample_size >= 5:
-        if (p25 - current_min) / p25 >= 0.15 and int(p25 * 0.95) > current_min:
-            return "СКУПКА"
+        flip_profit = int(p25 * 0.95) - current_min
+        if (p25 - current_min) / p25 >= 0.15 and flip_profit >= 2_500:
+            score = min(100, 35 + liq_score + stab_score + vel_score)
+            return "СКУПКА", score, f"дисконт >=15% к P25 (+{format_copper(flip_profit)}/шт.); " + ", ".join(reasons)
 
+    # 5. Margin & Absolute Profit (0..35)
     if craft_profit is not None and craft_cost is not None and craft_cost > 0:
-        if craft_profit > 0:
-            if liq == "Огранич.":
-                return "ОСТОРОЖНО"
-            if (roi_pct is not None and roi_pct >= 15.0) or craft_profit >= 10_000:
-                return "КРАФТИТЬ"
-            return "ВЫГОДНО"
-        return "УБЫТОЧНО"
+        if craft_profit <= 0:
+            return "УБЫТОЧНО", 0, "крафт дороже продажи (-5% АХ)"
 
-    return "—"
+        # Penalize micro-profits (< 20s = 2_000c) even if ROI% looks high
+        if craft_profit < 2_000:
+            score = min(44, 10 + liq_score // 2 + stab_score // 2)
+            return "ОСТОРОЖНО", score, f"микро-профит ({format_copper(craft_profit)}); " + ", ".join(reasons)
+
+        abs_pts = min(20, int(craft_profit / 2_500))  # 50s -> 20 pts
+        roi_pts = min(15, int((roi_pct or 0) / 4))     # 60% ROI -> 15 pts
+        total_score = max(0, min(100, liq_score + stab_score + vel_score + abs_pts + roi_pts))
+
+        if is_dumping or is_crowded_singles:
+            return "ОСТОРОЖНО", min(59, total_score), "; ".join(reasons)
+        if liq == "Огранич.":
+            return "ОСТОРОЖНО", min(55, total_score), f"огранич. ликвидность ({avail} шт.); " + ", ".join(reasons)
+        if total_score >= 65:
+            return "КРАФТИТЬ", total_score, "; ".join(reasons) or "высокая маржа и ликвидность"
+        if total_score >= 45:
+            return "ВЫГОДНО", total_score, "; ".join(reasons) or "положительная маржа"
+        return "ОСТОРОЖНО", total_score, "; ".join(reasons) or "умеренная оценка"
+
+    return "—", liq_score + stab_score, ", ".join(reasons) or "рыночный товар"
 
 
 REAGENT_NAMES_RU: dict[int, str] = {
@@ -264,6 +340,9 @@ TAILORING_ITEM_IDS = {
     253664, 253667, 253973, 254035, 254079, 254133, 254139, 277715,
 }
 
+# In WoW: Forever, healing potions & discolored healing potions belong to First Aid (Первая помощь)
+FOREVER_FIRST_AID_ITEMS = {118, 858, 1710, 3928, 4596, 13446, 241650, 247239, 247240, 247241, 247242}
+
 
 def _classify_item_group(item_id: int, category: str) -> str:
     if category == "cloth" or item_id in TAILORING_ITEM_IDS:
@@ -323,13 +402,18 @@ def build_dashboard_data(
         seed_set = set(seed_ids)
         rows = conn.execute(
             """
-            SELECT i.item_id, i.name_ru, i.category,
+            SELECT i.item_id, i.name_ru, i.category, i.icon_url, i.description_ru, i.quality,
                    o.min_unit_price_copper, o.p25_unit_price_copper,
                    o.median_unit_price_copper, o.total_available, o.sample_size
             FROM items i
             LEFT JOIN auction_observations o
               ON o.item_id = i.item_id AND o.snapshot_id = ?
-            WHERE o.snapshot_id IS NOT NULL OR i.item_id IN ({})
+            WHERE o.snapshot_id IS NOT NULL
+               OR i.item_id IN ({})
+               OR i.item_id IN (
+                   SELECT output_item_id FROM craft_recipes
+                   WHERE profession_ru IN ('Алхимия', 'Портняжное дело')
+               )
             ORDER BY i.item_id ASC
             """.format(",".join("?" for _ in seed_ids)),
             [snap_id, *seed_ids],
@@ -349,6 +433,27 @@ def build_dashboard_data(
             int(r["item_id"]): str(r["name_ru"])
             for r in conn.execute("SELECT item_id, name_ru FROM items").fetchall()
         }
+
+        history_map: dict[int, list[list]] = {}
+        hist_sql = """
+            SELECT o.item_id, s.captured_at, o.min_unit_price_copper,
+                   o.p25_unit_price_copper, o.median_unit_price_copper, o.total_available
+            FROM auction_observations o
+            JOIN snapshots s ON s.snapshot_id = o.snapshot_id
+            {where_clause}
+            ORDER BY s.captured_at ASC, s.snapshot_id ASC
+        """.format(where_clause="WHERE s.house_id = ?" if house_id is not None else "")
+        hist_rows = conn.execute(hist_sql, (house_id,) if house_id is not None else ()).fetchall()
+        for hr in hist_rows:
+            history_map.setdefault(int(hr["item_id"]), []).append(
+                [
+                    str(hr["captured_at"])[:16].replace("T", " "),
+                    int(hr["min_unit_price_copper"]),
+                    int(hr["p25_unit_price_copper"]),
+                    int(hr["median_unit_price_copper"]),
+                    int(hr["total_available"]),
+                ]
+            )
 
         fee_mult = Decimal("1") - Decimal(str(ah_fee_rate))
         for r in rows:
@@ -370,6 +475,9 @@ def build_dashboard_data(
             else:
                 active_reags, out_qty, prof_ru = None, 1, None
 
+            if iid in FOREVER_FIRST_AID_ITEMS or prof_ru == "Первая помощь":
+                prof_ru = "Первая помощь"
+
             is_craftable = active_reags is not None
             craft_cost = _compute_craft_cost(active_reags, price_map, out_qty) if is_craftable else None
             craft_profit: int | None = None
@@ -380,27 +488,31 @@ def build_dashboard_data(
                 if craft_cost > 0:
                     roi_pct = round((craft_profit / craft_cost) * 100.0, 1)
 
-            signal = _compute_trade_signal(
+            signal, sig_score, sig_reason = _evaluate_trade_decision(
                 current_min=cur_min,
                 p25=p25_val,
+                median=med_val,
                 craft_cost=craft_cost,
                 craft_profit=craft_profit,
                 roi_pct=roi_pct,
                 avail=avail_val,
                 sample_size=sample_val,
-                is_craftable=is_craftable,
+                history_pts=history_map.get(iid),
             )
             liq_label = _classify_liquidity(avail_val, sample_val, cur_min)
 
             # Skip curated items that have neither AH listings nor a craft recipe
-            if cur_min is None and iid not in CRAFT_RECIPES:
+            if cur_min is None and not is_craftable:
                 continue
 
-            group_label = (
-                _classify_item_group(iid, str(r["category"]))
-                if iid in seed_set
-                else "Весь рынок"
-            )
+            if prof_ru == "Первая помощь":
+                group_label = "Первая помощь"
+            elif iid in seed_set:
+                group_label = _classify_item_group(iid, str(r["category"]))
+            elif prof_ru in {"Алхимия", "Портняжное дело"}:
+                group_label = prof_ru
+            else:
+                group_label = "Весь рынок"
 
             items_out.append(
                 DashboardItemRow(
@@ -416,33 +528,17 @@ def build_dashboard_data(
                     craft_profit_copper=craft_profit,
                     roi_pct=roi_pct,
                     trade_signal=signal,
+                    signal_score=sig_score,
+                    signal_reason=sig_reason,
                     liquidity_label=liq_label,
                     sample_size=sample_val,
                     reagents_text=_format_reagents_text(active_reags, all_item_names),
                     total_available=avail_val,
+                    icon_url=str(r["icon_url"]) if r["icon_url"] else None,
+                    description_ru=str(r["description_ru"]) if r["description_ru"] else None,
+                    quality=str(r["quality"]) if r["quality"] else None,
                 )
             )
-
-    history_map: dict[int, list[list]] = {}
-    hist_sql = """
-        SELECT o.item_id, s.captured_at, o.min_unit_price_copper,
-               o.p25_unit_price_copper, o.median_unit_price_copper, o.total_available
-        FROM auction_observations o
-        JOIN snapshots s ON s.snapshot_id = o.snapshot_id
-        {where_clause}
-        ORDER BY s.captured_at ASC, s.snapshot_id ASC
-    """.format(where_clause="WHERE s.house_id = ?" if house_id is not None else "")
-    hist_rows = conn.execute(hist_sql, (house_id,) if house_id is not None else ()).fetchall()
-    for hr in hist_rows:
-        history_map.setdefault(int(hr["item_id"]), []).append(
-            [
-                str(hr["captured_at"])[:16].replace("T", " "),
-                int(hr["min_unit_price_copper"]),
-                int(hr["p25_unit_price_copper"]),
-                int(hr["median_unit_price_copper"]),
-                int(hr["total_available"]),
-            ]
-        )
 
     items_out.sort(key=lambda x: (x.group_label, x.name_ru))
     transmutes = build_transmute_report(conn, ah_fee_rate=ah_fee_rate, history_days=7, now=ref_now)
@@ -499,10 +595,15 @@ def render_dashboard_html(data: dict) -> str:
                 "roi": it.roi_pct,
                 "roi_fmt": f"{it.roi_pct:+.1f}%" if it.roi_pct is not None else "—",
                 "signal": it.trade_signal,
+                "score": it.signal_score,
+                "reason": it.signal_reason,
                 "liquidity": it.liquidity_label,
                 "samples": it.sample_size,
                 "reagents": it.reagents_text,
                 "avail": it.total_available,
+                "icon": it.icon_url,
+                "desc": it.description_ru,
+                "quality": it.quality,
             }
             for it in data["items"]
         ],
@@ -521,7 +622,7 @@ def render_dashboard_html(data: dict) -> str:
             and it.trade_signal in {"КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"}
             and (it.craft_profit_copper or 0) > 0
         ]
-        candidates.sort(key=lambda x: x.craft_profit_copper or 0, reverse=True)
+        candidates.sort(key=lambda x: (x.signal_score, x.craft_profit_copper or 0), reverse=True)
         return candidates[:limit]
 
     def _render_signal_cards(rows: list[DashboardItemRow]) -> str:
@@ -759,6 +860,26 @@ def render_dashboard_html(data: dict) -> str:
   .neg {{ color: var(--neg); font-weight: 600; font-family: "Fira Code", monospace; }}
   .copy-btn {{ background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 4px; vertical-align: middle; opacity: .7; }}
   .copy-btn:hover {{ color: var(--accent); opacity: 1; }}
+  .item-cell {{ display: inline-flex; align-items: center; gap: 8px; }}
+  .item-icon {{ width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--border-strong); background: #0B0F17; object-fit: cover; flex-shrink: 0; }}
+  .q-COMMON {{ color: #F1F5F9; }}
+  .q-UNCOMMON {{ color: #1EFF00; }}
+  .q-RARE {{ color: #38BDF8; }}
+  .q-EPIC {{ color: #C084FC; }}
+  #itemTooltip {{
+    position: fixed; display: none; pointer-events: none; z-index: 60;
+    min-width: 260px; max-width: 360px; background: rgba(9, 12, 20, 0.97);
+    border: 1px solid #475569; border-radius: 7px; padding: 10px 12px;
+    font-size: 12.5px; line-height: 1.38; box-shadow: 0 14px 34px rgba(0,0,0,0.72);
+  }}
+  .wt-line-w {{ color: #FFFFFF; }}
+  .wt-line-g {{ color: #1EFF00; }}
+  .wt-line-y {{ color: #FFD100; }}
+  .wt-split {{ display: flex; justify-content: space-between; gap: 18px; color: #FFFFFF; }}
+  .wt-coin {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 4px 0 2px; vertical-align: middle; }}
+  .wt-coin-g {{ background: #FACC15; }}
+  .wt-coin-s {{ background: #CBD5E1; }}
+  .wt-coin-c {{ background: #D97706; }}
   #toast {{ position: fixed; bottom: 20px; right: 24px; background: var(--card); border: 1px solid var(--pos); color: var(--text); padding: 9px 14px; border-radius: 10px; font-size: 12.5px; opacity: 0; pointer-events: none; transition: opacity .2s ease; box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 50; }}
   #toast.show {{ opacity: 1; }}
   .hidden {{ display: none !important; }}
@@ -788,6 +909,10 @@ def render_dashboard_html(data: dict) -> str:
       <button class="nav-btn active" data-view="overview">
         <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg> Обзор (Overview)</span>
       </button>
+      <button class="nav-btn" data-view="signals">
+        <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Сигналы и рейтинг</span>
+        <span class="nav-count" style="color:var(--pos);">{action_signals}</span>
+      </button>
       <button class="nav-btn" data-view="Алхимия">
         <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3h6"/><path d="M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/></svg> Алхимия</span>
         <span class="nav-count">{sum(1 for it in data['items'] if it.group_label == 'Алхимия')}</span>
@@ -795,6 +920,10 @@ def render_dashboard_html(data: dict) -> str:
       <button class="nav-btn" data-view="Портняжное дело">
         <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/></svg> Портняжное дело</span>
         <span class="nav-count">{sum(1 for it in data['items'] if it.group_label == 'Портняжное дело')}</span>
+      </button>
+      <button class="nav-btn" data-view="Первая помощь">
+        <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg> Первая помощь</span>
+        <span class="nav-count">{sum(1 for it in data['items'] if it.group_label == 'Первая помощь')}</span>
       </button>
       <button class="nav-btn" data-view="transmutes">
         <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg> Трансмутации (КД)</span>
@@ -886,6 +1015,7 @@ def render_dashboard_html(data: dict) -> str:
           <div class="card" id="inspectorDetail">
             <div class="card-label">Карточка предмета</div>
             <div id="inspName" style="font-size:16px; font-weight:700; margin-top:6px;">—</div>
+            <div id="inspReason" style="font-size:12px; color:var(--accent); margin-top:4px;">—</div>
             <div id="inspReagents" class="meta" style="margin-top:4px;">Реагенты: —</div>
             <div class="insp-metrics">
               <div class="insp-kv"><div class="insp-k">Мин. АХ</div><div class="insp-v" id="inspMin">—</div></div>
@@ -915,6 +1045,7 @@ def render_dashboard_html(data: dict) -> str:
               <th class="sortable" data-sort="name_ru">Предмет</th>
               <th class="sortable" data-sort="group">Раздел</th>
               <th class="sortable" data-sort="profession">Крафт</th>
+              <th class="sortable" data-sort="score">Скор</th>
               <th class="sortable" data-sort="signal">Сигнал</th>
               <th class="sortable" data-sort="liquidity">Ликвид.</th>
               <th class="sortable" data-sort="current_min">Мин. АХ</th>
@@ -950,6 +1081,8 @@ def render_dashboard_html(data: dict) -> str:
   </div>
 </div>
 
+<div id="itemTooltip"></div>
+<div id="toast"></div>
 <script>
 const ITEMS = {items_json};
 const HISTORY = {history_json};
@@ -1013,6 +1146,7 @@ function drawDynamicsChart(item) {{
   const pts = HISTORY[String(item.item_id)] || [];
   document.getElementById("chartTitle").textContent = `${{item.name_ru}} (#${{item.item_id}}) · Снимков: ${{pts.length}}`;
   document.getElementById("inspName").textContent = item.name_ru;
+  document.getElementById("inspReason").textContent = `Оценка: ${{item.score}}/100 · ${{item.reason}}`;
   document.getElementById("inspReagents").textContent = `Реагенты: ${{item.reagents}}`;
   document.getElementById("inspMin").textContent = item.current_min_fmt;
   document.getElementById("inspCost").textContent = item.craft_cost_fmt;
@@ -1141,7 +1275,7 @@ function signalBadge(sig) {{
 
 function applyViewVisibility() {{
   const isTrans = currentView === "transmutes";
-  document.getElementById("signalsSection").classList.toggle("hidden", currentView !== "overview");
+  document.getElementById("signalsSection").classList.toggle("hidden", currentView !== "overview" && currentView !== "signals");
   document.getElementById("inspectorSection").classList.toggle("hidden", isTrans);
   document.getElementById("explorerSection").classList.toggle("hidden", isTrans);
   document.getElementById("transmutesSection").classList.toggle("hidden", currentView !== "overview" && !isTrans);
@@ -1151,23 +1285,35 @@ function renderTable() {{
   applyViewVisibility();
   const tbody = document.getElementById("itemsBody");
   const filtered = ITEMS.filter(it =>
-    (currentView === "ALL" || (currentView === "overview" ? it.group !== "Весь рынок" : it.group === currentView)) &&
+    (currentView === "ALL" || currentView === "signals"
+      ? (currentView !== "signals" || ["КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"].includes(it.signal))
+      : (currentView === "overview" ? it.group !== "Весь рынок" : it.group === currentView)) &&
     (!onlyCraftable || it.is_craftable) &&
     (!onlySignals || ["КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"].includes(it.signal)) &&
     (!onlyProfit || (it.craft_profit !== null && it.craft_profit > 0)) &&
     (!currentQuery || it.name_ru.toLowerCase().includes(currentQuery) || String(it.item_id).includes(currentQuery))
-  ).sort(compareValues);
+  ).sort((a, b) => {{
+    const primary = compareValues(a, b);
+    if (primary !== 0) return primary;
+    return ((b.craft_profit ?? -1e12) - (a.craft_profit ?? -1e12));
+  }});
   updateSortHeaders();
   const visible = filtered.slice(0, renderLimit);
   document.getElementById("countInfo").textContent = `Показано ${{visible.length}} из ${{filtered.length}}`;
   const moreBtn = document.getElementById("loadMoreBtn");
   moreBtn.style.display = filtered.length > renderLimit ? "inline-block" : "none";
-  tbody.innerHTML = visible.map(it => `
+  tbody.innerHTML = visible.map(it => {{
+    const iconTag = it.icon
+      ? `<img class="item-icon" src="${{it.icon}}" loading="lazy" alt="" />`
+      : `<span class="item-icon" style="display:inline-grid;place-items:center;font-size:10px;color:var(--muted);">•</span>`;
+    const qCls = it.quality ? `q-${{it.quality}}` : "";
+    return `
     <tr data-id="${{it.item_id}}" style="cursor:pointer;">
       <td class="mono">${{it.item_id}}</td>
-      <td>${{it.name_ru}} <button class="copy-btn" data-copy="${{it.name_ru.replace(/"/g, '&quot;')}}" title="Копировать название"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></td>
+      <td><span class="item-cell" data-tip-id="${{it.item_id}}">${{iconTag}}<span class="${{qCls}}">${{it.name_ru}}</span><button class="copy-btn" data-copy="${{it.name_ru.replace(/"/g, '&quot;')}}" title="Копировать название"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span></td>
       <td>${{it.group}}</td>
       <td>${{it.is_craftable ? '<span class="pos">' + it.profession + '</span>' : '—'}}</td>
+      <td class="mono"><b style="color:${{it.score >= 65 ? 'var(--pos)' : it.score >= 45 ? 'var(--accent)' : 'var(--muted)'}}">${{it.score}}</b></td>
       <td>${{signalBadge(it.signal)}}</td>
       <td style="color:var(--muted);">${{it.liquidity}}</td>
       <td class="mono"><b>${{it.current_min_fmt}}</b></td>
@@ -1179,7 +1325,64 @@ function renderTable() {{
       <td style="color:var(--muted); font-size:12px;">${{it.reagents}}</td>
       <td class="mono">${{it.avail}}</td>
     </tr>
-  `).join("");
+  `;}}).join("");
+  const tipEl = document.getElementById("itemTooltip");
+  const fmtCoinsHtml = copper => {{
+    const g = Math.floor(copper / 10000);
+    const s = Math.floor((copper % 10000) / 100);
+    const c = copper % 100;
+    const parts = [];
+    if (g > 0) parts.push(`${{g}}<span class="wt-coin wt-coin-g"></span>`);
+    if (s > 0 || g > 0) parts.push(`${{s}}<span class="wt-coin wt-coin-s"></span>`);
+    parts.push(`${{c}}<span class="wt-coin wt-coin-c"></span>`);
+    return parts.join("");
+  }};
+  tbody.querySelectorAll(".item-cell[data-tip-id]").forEach(el => {{
+    el.addEventListener("mouseenter", e => {{
+      const it = ITEMS.find(x => String(x.item_id) === el.dataset.tipId);
+      if (!it) return;
+      const qCls = it.quality ? `q-${{it.quality}}` : "q-COMMON";
+      const img = it.icon ? `<img src="${{it.icon}}" style="width:28px;height:28px;border-radius:4px;border:1px solid #475569;flex-shrink:0;" />` : "";
+      let bodyHtml = "";
+      if (it.desc && it.desc.startsWith("{{")) {{
+        try {{
+          const d = JSON.parse(it.desc);
+          if (d.b) bodyHtml += `<div class="wt-line-w">${{d.b}}</div>`;
+          if (d.sl || d.sc) bodyHtml += `<div class="wt-split"><span>${{d.sl || ""}}</span><span>${{d.sc || ""}}</span></div>`;
+          if (Array.isArray(d.l)) {{
+            d.l.forEach(ln => {{
+              const cls = ln.c === "g" ? "wt-line-g" : ln.c === "y" ? "wt-line-y" : "wt-line-w";
+              bodyHtml += `<div class="${{cls}}">${{ln.t}}</div>`;
+            }});
+          }}
+          if (d.sp) bodyHtml += `<div class="wt-line-w">Цена продажи: ${{fmtCoinsHtml(d.sp)}}</div>`;
+        }} catch (_err) {{
+          bodyHtml = `<div class="wt-line-w">${{it.desc}}</div>`;
+        }}
+      }} else if (it.desc) {{
+        bodyHtml = `<div class="wt-line-w">${{it.desc}}</div>`;
+      }}
+      tipEl.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          ${{img}}
+          <div style="font-size:13.5px;font-weight:700;" class="${{qCls}}">${{it.name_ru}}</div>
+        </div>
+        ${{bodyHtml}}
+        <div style="border-top:1px solid rgba(148,163,184,0.22);margin-top:7px;padding-top:6px;">
+          <div style="color:var(--accent);font-size:11.5px;">Скор: <b>${{it.score}}/100</b> · ${{it.reason}}</div>
+          ${{it.reagents !== "—" ? `<div style="color:var(--muted);font-size:11px;margin-top:2px;">Реагенты: ${{it.reagents}}</div>` : ""}}
+        </div>
+      `;
+      tipEl.style.display = "block";
+    }});
+    el.addEventListener("mousemove", e => {{
+      const tw = tipEl.offsetWidth || 320;
+      const th = tipEl.offsetHeight || 180;
+      tipEl.style.left = Math.min(window.innerWidth - tw - 12, e.clientX + 16) + "px";
+      tipEl.style.top = Math.min(window.innerHeight - th - 12, e.clientY + 14) + "px";
+    }});
+    el.addEventListener("mouseleave", () => {{ tipEl.style.display = "none"; }});
+  }});
   tbody.querySelectorAll(".copy-btn").forEach(btn => {{
     btn.addEventListener("click", e => {{
       e.stopPropagation();
@@ -1232,6 +1435,10 @@ document.querySelectorAll(".nav-btn[data-view]").forEach(btn => {{
     document.querySelectorAll(".nav-btn[data-view]").forEach(x => x.classList.remove("active"));
     btn.classList.add("active");
     currentView = btn.dataset.view;
+    if (currentView === "signals") {{
+      sortKey = "score";
+      sortDir = -1;
+    }}
     document.getElementById("viewTitle").textContent = btn.querySelector(".nav-left").textContent.trim();
     renderLimit = 200;
     document.querySelectorAll(".quick-pill[data-id], .dt-bar-row[data-id]").forEach(el => {{
@@ -1321,7 +1528,6 @@ document.querySelectorAll(".quick-pill[data-id], .dt-bar-row[data-id]").forEach(
 
 renderTable();
 </script>
-<div id="toast"></div>
 </body>
 </html>
 """
