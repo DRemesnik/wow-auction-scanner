@@ -2,7 +2,7 @@ name: WoW Forever AH Scan
 
 on:
   schedule:
-    - cron: "25 * * * *"
+    - cron: "45 * * * *"
   workflow_dispatch:
     inputs:
       sync_static:
