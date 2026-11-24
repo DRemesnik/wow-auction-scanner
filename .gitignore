@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite
+data/dashboard.html
+!data/.gitkeep
+.pytest_cache/
