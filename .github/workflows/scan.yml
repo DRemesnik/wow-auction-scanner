@@ -35,7 +35,8 @@ jobs:
 
       - name: Restore persisted DB from gh-pages
         run: |
-          mkdir -p _pages data
+          mkdir -p data
+          rm -rf _pages
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
             git fetch origin gh-pages --depth=1
             git worktree add _pages origin/gh-pages
