@@ -9,11 +9,11 @@ BINDING_NAME_FOREVERSNIPER_TOGGLE = "Показать / Скрыть окно"
 ForeverSniperDB = ForeverSniperDB or {
   watchlist = {}, -- [itemID] = maxUnitCopper
   qtyLimits = {}, -- [itemID] = maxBuyQty (nil or 0 = unlimited)
-  presets = {},   -- [name] = { watchlist = {...}, qtyLimits = {...} }
+  tracked = {},   -- [itemID] = boolean (nil/true = tracked, false = skipped)
+  presets = {},   -- [name] = { watchlist = {...}, qtyLimits = {...}, tracked = {...} }
   activePreset = nil,
   selectedID = nil,
   autoScan = false,
-  rotateScan = false,
   soundAlert = true,
   miniMode = false,
 }
@@ -238,17 +238,27 @@ local function CreateFlatButton(name, parent, w, h, text)
   return btn
 end
 
+local function IsItemTracked(itemID)
+  ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+  return ForeverSniperDB.tracked[itemID] ~= false
+end
+
 local function RebuildQueue()
+  state.allItems = {}
   state.queue = {}
   for itemID, maxPrice in pairs(ForeverSniperDB.watchlist or {}) do
     local id = tonumber(itemID)
     local price = tonumber(maxPrice)
     if id and price and price > 0 then
-      table.insert(state.queue, id)
+      table.insert(state.allItems, id)
+      if IsItemTracked(id) then
+        table.insert(state.queue, id)
+      end
     end
   end
+  table.sort(state.allItems)
   table.sort(state.queue)
-  if #state.queue == 0 then
+  if #state.allItems == 0 then
     ForeverSniperDB.selectedID = nil
     state.idx = 1
     return
@@ -260,16 +270,22 @@ local function RebuildQueue()
         return
       end
     end
+    for _, id in ipairs(state.allItems) do
+      if id == ForeverSniperDB.selectedID then
+        state.idx = 1
+        return
+      end
+    end
   end
   state.idx = 1
-  ForeverSniperDB.selectedID = state.queue[1]
+  ForeverSniperDB.selectedID = state.queue[1] or state.allItems[1]
 end
 
 -- ============================================================================
 -- Main Frame (Goblin Broker: Forever — Branded Navy / Gold / Emerald)
 -- ============================================================================
 local f = CreateFrame("Frame", "ForeverSniperFrame", UIParent, "BackdropTemplate")
-f:SetSize(524, 530)
+f:SetSize(564, 616)
 f:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -30, 100)
 f:SetFrameStrata("DIALOG")
 f:SetToplevel(true)
@@ -575,33 +591,61 @@ wlHeader:SetJustifyH("LEFT")
 wlHeader:SetWordWrap(false)
 wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
 
-local rotateBtn = CreateFlatButton(nil, f, 128, 20, DOT_GRAY .. " По кругу: ВЫКЛ")
-rotateBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -9)
+local trackBtn = CreateFlatButton(nil, f, 146, 20, DOT_GRAY .. " Выбрано: 0")
+trackBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -9)
 
 local presetsBtn = CreateFlatButton(nil, f, 90, 20, "Пресеты")
-presetsBtn:SetPoint("RIGHT", rotateBtn, "LEFT", -6, 0)
+presetsBtn:SetPoint("RIGHT", trackBtn, "LEFT", -6, 0)
 presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.55 }, { 0.96, 0.85, 0.55 })
 wlHeader:SetPoint("RIGHT", presetsBtn, "LEFT", -8, 0)
 
-local function RefreshRotateBtn()
-  if ForeverSniperDB.rotateScan then
-    rotateBtn:SetLabel(DOT_GREEN .. " По кругу: ВКЛ")
-    rotateBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
+local function RefreshTrackBtn()
+  local total = state.allItems and #state.allItems or 0
+  local active = state.queue and #state.queue or 0
+  if total == 0 then
+    trackBtn:SetLabel(DOT_GRAY .. " Нет целей")
+    trackBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
+  elseif active > 1 then
+    trackBtn:SetLabel(DOT_GREEN .. string.format(" По кругу: %d/%d", active, total))
+    trackBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
+  elseif active == 1 then
+    trackBtn:SetLabel(DOT_AMBER .. string.format(" Фокус: 1/%d", total))
+    trackBtn:SetColors({ 0.16, 0.13, 0.04, 1 }, { 0.24, 0.19, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.99, 0.88, 0.45 })
   else
-    rotateBtn:SetLabel(DOT_GRAY .. " По кругу: ВЫКЛ")
-    rotateBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
+    trackBtn:SetLabel(DOT_GRAY .. string.format(" Выбрано: 0/%d", total))
+    trackBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
   end
 end
 
-rotateBtn:SetScript("OnClick", function()
-  ForeverSniperDB.rotateScan = not ForeverSniperDB.rotateScan
-  RefreshRotateBtn()
+trackBtn:SetScript("OnClick", function()
+  local all = state.allItems or {}
+  if #all == 0 then return end
+  ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+  local active = state.queue and #state.queue or 0
+  if active < #all then
+    for _, id in ipairs(all) do ForeverSniperDB.tracked[id] = true end
+  elseif #all > 1 then
+    local keep = ForeverSniperDB.selectedID or all[1]
+    for _, id in ipairs(all) do ForeverSniperDB.tracked[id] = (id == keep) end
+  end
+  if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+  UpdateStatus()
 end)
+
+trackBtn:SetScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_TOP")
+  GameTooltip:AddLine("Режим обхода (по моноклям)", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Если включено 2+ глаза — сканер автоматически", 0.85, 0.90, 0.96, true)
+  GameTooltip:AddLine("идёт по кругу. Если 1 — бьёт в одну цель.", 0.85, 0.90, 0.96, true)
+  GameTooltip:AddLine("Клик: включить все глаза / фокус на текущем.", 0.60, 0.72, 0.84, true)
+  GameTooltip:Show()
+end)
+trackBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 local wlBox = CreateFrame("Frame", nil, f, "BackdropTemplate")
 wlBox:SetPoint("TOPLEFT", wlHeader, "BOTTOMLEFT", -2, -6)
 wlBox:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -29)
-wlBox:SetHeight(92)
+wlBox:SetHeight(178)
 wlBox:SetBackdrop(FLAT_BACKDROP)
 wlBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
 wlBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
@@ -625,7 +669,7 @@ if wlScrollBar then
 end
 
 local wlContent = CreateFrame("Frame", nil, wlScroll)
-wlContent:SetSize(462, 84)
+wlContent:SetSize(502, 168)
 wlScroll:SetScrollChild(wlContent)
 
 local wlRows = {}
@@ -1191,7 +1235,7 @@ local function ApplyMiniMode()
     cfgCard:Hide()
     wlHeader:Hide()
     presetsBtn:Hide()
-    rotateBtn:Hide()
+    trackBtn:Hide()
     wlBox:Hide()
     dealCard:ClearAllPoints()
     dealCard:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -62)
@@ -1203,12 +1247,12 @@ local function ApplyMiniMode()
     cfgCard:Show()
     wlHeader:Show()
     presetsBtn:Show()
-    rotateBtn:Show()
+    trackBtn:Show()
     wlBox:Show()
     dealCard:ClearAllPoints()
     dealCard:SetPoint("TOPLEFT", wlBox, "BOTTOMLEFT", 0, -10)
     dealCard:SetPoint("TOPRIGHT", wlBox, "BOTTOMRIGHT", 0, -10)
-    f:SetHeight(530)
+    f:SetHeight(616)
     miniBtn:SetLabel("Мини")
     miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.78, 0.84, 0.94 })
   end
@@ -1288,11 +1332,11 @@ local function RenderWatchlist()
 
   local rowH = 26
   local y = 0
-  for i, itemID in ipairs(state.queue) do
+  for i, itemID in ipairs(state.allItems or {}) do
     local row = wlRows[i]
     if not row then
       row = CreateFrame("Button", nil, wlContent, "BackdropTemplate")
-      row:SetSize(458, rowH)
+      row:SetSize(498, rowH)
       row:SetBackdrop(FLAT_BACKDROP)
 
       row.bar = row:CreateTexture(nil, "ARTWORK")
@@ -1300,14 +1344,38 @@ local function RenderWatchlist()
       row.bar:SetPoint("TOPLEFT", 1, -1)
       row.bar:SetPoint("BOTTOMLEFT", 1, 1)
 
+      row.eye = CreateFrame("Button", nil, row, "BackdropTemplate")
+      row.eye:SetSize(20, 20)
+      row.eye:SetPoint("LEFT", 7, 0)
+      row.eye:SetBackdrop(FLAT_BACKDROP)
+      row.eye.tex = row.eye:CreateTexture(nil, "ARTWORK")
+      row.eye.tex:SetPoint("TOPLEFT", 2, -2)
+      row.eye.tex:SetPoint("BOTTOMRIGHT", -2, 2)
+      row.eye.tex:SetTexture("Interface\\AddOns\\ForeverSniper\\minimap_icon.tga")
+      row.eye.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      row.eye:SetScript("OnEnter", function(self)
+        local id = self.itemID
+        local on = id and IsItemTracked(id)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        if on then
+          GameTooltip:AddLine("Гоблин следит за товаром (ВКЛ)", 0.06, 0.73, 0.51)
+          GameTooltip:AddLine("Клик: исключить из кругового обхода", 0.80, 0.86, 0.94)
+        else
+          GameTooltip:AddLine("Товар пропущен (ВЫКЛ)", 0.65, 0.72, 0.82)
+          GameTooltip:AddLine("Клик: включить гоблина-наблюдателя", 0.80, 0.86, 0.94)
+        end
+        GameTooltip:Show()
+      end)
+      row.eye:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
       row.ico = row:CreateTexture(nil, "ARTWORK")
       row.ico:SetSize(18, 18)
-      row.ico:SetPoint("LEFT", 8, 0)
+      row.ico:SetPoint("LEFT", row.eye, "RIGHT", 6, 0)
       row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
       row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.name:SetPoint("LEFT", row.ico, "RIGHT", 6, 0)
-      row.name:SetWidth(124)
+      row.name:SetWidth(134)
       row.name:SetJustifyH("LEFT")
       row.name:SetWordWrap(false)
 
@@ -1319,7 +1387,7 @@ local function RenderWatchlist()
 
       row.live = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.live:SetPoint("LEFT", row.price, "RIGHT", 4, 0)
-      row.live:SetWidth(114)
+      row.live:SetWidth(116)
       row.live:SetJustifyH("LEFT")
       row.live:SetWordWrap(false)
 
@@ -1338,15 +1406,32 @@ local function RenderWatchlist()
 
     local icon, nm, r, g, b = GetItemVisuals(itemID)
     local isSel = (itemID == ForeverSniperDB.selectedID)
+    local isTracked = IsItemTracked(itemID)
     local lim = ForeverSniperDB.watchlist[itemID] or 0
     local cap = GetQtyCap(itemID)
 
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", 0, -y)
+    row.eye.itemID = itemID
+    if isTracked then
+      row.eye:SetBackdropColor(0.04, 0.16, 0.14, 1)
+      row.eye:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.9)
+      row.eye.tex:SetDesaturated(false)
+      row.eye.tex:SetVertexColor(1, 1, 1, 1)
+    else
+      row.eye:SetBackdropColor(0.06, 0.08, 0.12, 0.85)
+      row.eye:SetBackdropBorderColor(0.18, 0.24, 0.34, 0.6)
+      row.eye.tex:SetDesaturated(true)
+      row.eye.tex:SetVertexColor(0.45, 0.50, 0.60, 0.45)
+    end
     row.ico:SetTexture(icon)
+    row.ico:SetDesaturated(not isTracked)
+    row.ico:SetAlpha(isTracked and 1 or 0.45)
     row.name:SetText(nm)
     row.name:SetTextColor(r, g, b)
+    row.name:SetAlpha(isTracked and 1 or 0.5)
     row.price:SetText(FormatCoins(lim))
+    row.price:SetAlpha(isTracked and 1 or 0.5)
     local seen = state.lastSeenByItem and state.lastSeenByItem[itemID]
     if seen then
       if (seen.availBelow or 0) > 0 and seen.lowestPrice then
@@ -1382,9 +1467,25 @@ local function RenderWatchlist()
       UpdateStatus()
     end)
 
+    row.eye:SetScript("OnClick", function()
+      ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+      local nextState = not IsItemTracked(itemID)
+      ForeverSniperDB.tracked[itemID] = nextState
+      if not nextState and ForeverSniperDB.selectedID == itemID then
+        ForeverSniperDB.selectedID = nil
+      elseif nextState then
+        ForeverSniperDB.selectedID = itemID
+      end
+      if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+      ClearPendingDeal()
+      UpdateStatus()
+      SyncInputsFromSelected()
+    end)
+
     row.del:SetScript("OnClick", function()
       ForeverSniperDB.watchlist[itemID] = nil
       if ForeverSniperDB.qtyLimits then ForeverSniperDB.qtyLimits[itemID] = nil end
+      if ForeverSniperDB.tracked then ForeverSniperDB.tracked[itemID] = nil end
       if ForeverSniperDB.selectedID == itemID then
         ForeverSniperDB.selectedID = nil
       end
@@ -1398,9 +1499,9 @@ local function RenderWatchlist()
     y = y + rowH + 2
   end
 
-  wlContent:SetHeight(math.max(84, y))
+  wlContent:SetHeight(math.max(168, y))
   if wlScrollBar then
-    if #state.queue <= 3 then
+    if #(state.allItems or {}) <= 6 then
       wlScrollBar:Hide()
       wlScroll:SetPoint("BOTTOMRIGHT", -4, 4)
     else
@@ -1412,6 +1513,7 @@ end
 
 UpdateStatus = function()
   RebuildQueue()
+  RefreshTrackBtn()
 
   if not state.ahOpen then
     statusText:SetText(DOT_AMBER .. " |cfff59e0bНет окна АХ|r")
@@ -1716,7 +1818,7 @@ end)
 
 local function SendTargetQuery()
   local rotated = false
-  if ForeverSniperDB.rotateScan and #state.queue > 1 and not state.pendingDeal then
+  if #state.queue > 1 and not state.pendingDeal then
     state.idx = (state.idx % #state.queue) + 1
     ForeverSniperDB.selectedID = state.queue[state.idx]
     SyncInputsFromSelected()
@@ -2019,6 +2121,7 @@ local function SyncActivePresetSnapshot()
     ForeverSniperDB.presets[ap] = {
       watchlist = CopyTableShallow(ForeverSniperDB.watchlist),
       qtyLimits = CopyTableShallow(ForeverSniperDB.qtyLimits),
+      tracked = CopyTableShallow(ForeverSniperDB.tracked),
     }
   end
 end
@@ -2095,12 +2198,9 @@ local function RenderPresetsList()
       ForeverSniperDB.activePreset = nm
       ForeverSniperDB.watchlist = CopyTableShallow(p.watchlist)
       ForeverSniperDB.qtyLimits = CopyTableShallow(p.qtyLimits)
+      ForeverSniperDB.tracked = CopyTableShallow(p.tracked)
       ForeverSniperDB.selectedID = nil
       state.lastSeenByItem = {}
-      if cnt > 1 then
-        ForeverSniperDB.rotateScan = true
-        RefreshRotateBtn()
-      end
       pre:Hide()
       ClearPendingDeal()
       UpdateStatus()
@@ -2165,6 +2265,7 @@ local function SaveCurrentPreset(emptyNew)
     ForeverSniperDB.presets[nm] = {
       watchlist = CopyTableShallow(ForeverSniperDB.watchlist),
       qtyLimits = CopyTableShallow(ForeverSniperDB.qtyLimits),
+      tracked = CopyTableShallow(ForeverSniperDB.tracked),
     }
     ForeverSniperDB.activePreset = nm
     UpdateStatus()
@@ -2403,7 +2504,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     EnsureBackgroundSoundCVar()
     RefreshBuyHotkeyCache()
     RefreshSoundBtn()
-    RefreshRotateBtn()
+    RefreshTrackBtn()
     ApplyMiniMode()
     UpdateMinimapPos()
     HookAuctionHouseFrame()
