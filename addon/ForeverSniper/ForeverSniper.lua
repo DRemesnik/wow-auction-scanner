@@ -2,13 +2,14 @@ local ADDON_NAME = ...
 
 -- Keybinding labels for WoW's Key Bindings UI
 BINDING_HEADER_FOREVERSNIPER = "Goblin Broker: Forever"
-_G["BINDING_NAME_CLICK ForeverSniperBuyBtn:LeftButton"] = "Купить / Подтвердить лот"
-_G["BINDING_NAME_CLICK ForeverSniperScanBtn:LeftButton"] = "Старт / Пауза скана"
-_G["BINDING_NAME_CLICK ForeverSniperMinimapBtn:LeftButton"] = "Показать / Скрыть окно"
+BINDING_NAME_FOREVERSNIPER_BUY = "Купить / Подтвердить лот"
+BINDING_NAME_FOREVERSNIPER_SCAN = "Старт / Пауза скана"
+BINDING_NAME_FOREVERSNIPER_TOGGLE = "Показать / Скрыть окно"
 
 ForeverSniperDB = ForeverSniperDB or {
   watchlist = {}, -- [itemID] = maxUnitCopper
   qtyLimits = {}, -- [itemID] = maxBuyQty (nil or 0 = unlimited)
+  presets = {},   -- [name] = { watchlist = {...}, qtyLimits = {...} }
   selectedID = nil,
   autoScan = false,
   rotateScan = false,
@@ -83,6 +84,10 @@ local FLAT_BACKDROP = {
 local ICON_GOLD   = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:1:0|t"
 local ICON_SILVER = "|TInterface\\MoneyFrame\\UI-SilverIcon:12:12:1:0|t"
 local ICON_COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:12:12:1:0|t"
+local DOT_GREEN = "|TInterface\\COMMON\\Indicator-Green:11:11:0:0|t"
+local DOT_AMBER = "|TInterface\\COMMON\\Indicator-Yellow:11:11:0:0|t"
+local DOT_RED   = "|TInterface\\COMMON\\Indicator-Red:11:11:0:0|t"
+local DOT_GRAY  = "|TInterface\\COMMON\\Indicator-Gray:11:11:0:0|t"
 
 local function FormatCoins(copper)
   if not copper or copper <= 0 then
@@ -277,7 +282,7 @@ title:SetText("|cfff59e0bGoblin Broker|r|cfff8fafc: Forever|r")
 
 local subtitle = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("BOTTOMLEFT", brandMark, "BOTTOMRIGHT", 10, 1)
-subtitle:SetText("|cff94a3b8EU Орда · AH Снайпер (1с)|r")
+subtitle:SetText("|cff94a3b8EU Орда | AH Снайпер (1с)|r")
 
 -- Close button
 local closeBtn = CreateFlatButton(nil, f, 26, 26, "X")
@@ -295,7 +300,7 @@ statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
 
 local statusText = statusPill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 statusText:SetPoint("CENTER")
-statusText:SetText("|cff94a3b8● Пауза|r")
+statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
 
 -- Sound Alert Toggle (works in background via Sound_EnableSoundWhenGameIsInBG)
 local soundBtn = CreateFlatButton(nil, f, 88, 26, "Звук: ВКЛ")
@@ -303,10 +308,10 @@ soundBtn:SetPoint("RIGHT", statusPill, "LEFT", -6, 0)
 
 local function RefreshSoundBtn()
   if IsSoundEnabled() then
-    soundBtn:SetLabel("|cff10b981●|r Звук: ВКЛ")
+    soundBtn:SetLabel(DOT_GREEN .. " Звук: ВКЛ")
     soundBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
   else
-    soundBtn:SetLabel("|cff64748b○|r Звук: ВЫКЛ")
+    soundBtn:SetLabel(DOT_GRAY .. " Звук: ВЫКЛ")
     soundBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.58, 0.65, 0.75 })
   end
 end
@@ -497,7 +502,7 @@ local function ApplyPreviewItemID(itemID)
   iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
   targetNameText:SetText(nm)
   targetNameText:SetTextColor(r, g, b)
-  targetSubText:SetText(string.format("|cff64748bID %d  ·  Укажите цену и нажмите Применить|r", id))
+  targetSubText:SetText(string.format("|cff64748bID %d  |  Укажите цену и нажмите Применить|r", id))
   goldInput:SetFocus()
   return true
 end
@@ -534,15 +539,19 @@ local wlHeader = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 wlHeader:SetPoint("TOPLEFT", cfgCard, "BOTTOMLEFT", 2, -12)
 wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
 
-local rotateBtn = CreateFlatButton(nil, f, 128, 20, "○ По кругу: ВЫКЛ")
+local rotateBtn = CreateFlatButton(nil, f, 128, 20, DOT_GRAY .. " По кругу: ВЫКЛ")
 rotateBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -9)
+
+local presetsBtn = CreateFlatButton(nil, f, 84, 20, "Пресеты")
+presetsBtn:SetPoint("RIGHT", rotateBtn, "LEFT", -6, 0)
+presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.55 }, { 0.96, 0.85, 0.55 })
 
 local function RefreshRotateBtn()
   if ForeverSniperDB.rotateScan then
-    rotateBtn:SetLabel("|cff10b981●|r По кругу: ВКЛ")
+    rotateBtn:SetLabel(DOT_GREEN .. " По кругу: ВКЛ")
     rotateBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
   else
-    rotateBtn:SetLabel("|cff64748b○|r По кругу: ВЫКЛ")
+    rotateBtn:SetLabel(DOT_GRAY .. " По кругу: ВЫКЛ")
     rotateBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
   end
 end
@@ -681,7 +690,7 @@ sessionOutcomeText:SetPoint("LEFT", 10, 0)
 sessionOutcomeText:SetJustifyH("LEFT")
 sessionOutcomeText:SetText("|cff64748bПокупок за сессию ещё не было|r")
 
-local clearHistBarBtn = CreateFlatButton(nil, sessionBar, 18, 18, "×")
+local clearHistBarBtn = CreateFlatButton(nil, sessionBar, 18, 18, "x")
 clearHistBarBtn:SetPoint("RIGHT", -4, 0)
 clearHistBarBtn:SetColors({ 0.11, 0.14, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.20, 0.26, 0.36, 1 }, { 0.75, 0.80, 0.88 })
 
@@ -1002,7 +1011,7 @@ local function RefreshSessionBar()
     sessionOutcomeText:SetText("|cff64748bПокупок за сессию ещё не было|r")
   end
   if sb.totalQty > 0 then
-    sessionTotalsText:SetText(string.format("|cff94a3b8Сессия:|r |cffffffff%d шт|r · %s", sb.totalQty, FormatCoins(sb.totalCopper)))
+    sessionTotalsText:SetText(string.format("|cff94a3b8Сессия:|r |cffffffff%d шт|r | %s", sb.totalQty, FormatCoins(sb.totalCopper)))
   else
     sessionTotalsText:SetText("")
   end
@@ -1021,7 +1030,7 @@ local function RecordCompletedPurchase(att)
   sb.totalCopper = sb.totalCopper + total
   table.insert(sb.history, att)
   if #sb.history > 100 then table.remove(sb.history, 1) end
-  sb.lastOutcome = string.format("|cff10b981● Куплено:|r x%d по %s/шт (%s)", qty, FormatCoinsPlain(unitAvg), FormatCoinsPlain(total))
+  sb.lastOutcome = string.format(DOT_GREEN .. " |cff10b981Куплено:|r x%d по %s/шт (%s)", qty, FormatCoinsPlain(unitAvg), FormatCoinsPlain(total))
   RefreshSessionBar()
 
   -- Decrement remaining buy quantity quota (e.g. 100 - 10 = 90)
@@ -1035,18 +1044,15 @@ local function RecordCompletedPurchase(att)
       end
       UpdateStatus()
     else
+      -- Keep item in watchlist & selected so user doesn't lose their setup; just pause auto-scan
       ForeverSniperDB.qtyLimits[att.itemID] = nil
-      ForeverSniperDB.watchlist[att.itemID] = nil
-      if ForeverSniperDB.selectedID == att.itemID then
-        ForeverSniperDB.selectedID = nil
+      if att.itemID == ForeverSniperDB.selectedID then
+        maxQtyLimitInput:SetText("")
       end
+      ForeverSniperDB.autoScan = false
       UpdateStatus()
-      SyncInputsFromSelected()
-      if #state.queue == 0 then
-        ForeverSniperDB.autoScan = false
-        UpdateStatus()
-      end
-      print(string.format("|cff10b981Goblin Broker:|r цель по %s выполнена!", att.name or ("Item #" .. tostring(att.itemID))))
+      dealBadge:SetText(DOT_GREEN .. " |cff10b981ЛИМИТ ВЫКУПЛЕН - СКАН НА ПАУЗЕ|r")
+      print(string.format("|cff10b981Goblin Broker:|r лимит по %s выкуплен (скан поставлен на паузу).", att.name or ("Item #" .. tostring(att.itemID))))
     end
   end
 end
@@ -1124,7 +1130,7 @@ skipBtn:SetFlatEnabled(false)
 -- ============================================================================
 local function GetBuyHotkeySuffix()
   if not GetBindingKey then return "" end
-  local key = GetBindingKey("CLICK ForeverSniperBuyBtn:LeftButton")
+  local key = GetBindingKey("FOREVERSNIPER_BUY")
   if key and key ~= "" then
     return "  |cfffef08a[" .. key .. "]|r"
   end
@@ -1148,13 +1154,13 @@ local function RefreshBuyButtonText()
 
   if deal.stage == "confirm" then
     local rem = math.max(0, math.ceil(10 - (GetTime() - (deal.confirmAt or GetTime()))))
-    buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ x%d (%dс) · %s%s", chosenQty, rem, FormatCoinsPlain(totalCost), hk))
+    buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ x%d (%dс) | %s%s", chosenQty, rem, FormatCoinsPlain(totalCost), hk))
     buyBtn:SetColors({ 0.68, 0.40, 0.03, 1 }, { 0.85, 0.50, 0.04, 1 }, { 0.96, 0.62, 0.04, 1 }, { 1, 1, 1 })
     dealStripe:SetColorTexture(0.96, 0.62, 0.04, 1)
     dealCard:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.8)
     dealBadge:SetText("|cfff59e0bПОДТВЕРЖДЕНИЕ (ПКМ — отмена)|r")
   else
-    buyBtn:SetLabel(string.format("КУПИТЬ x%d  ·  %s%s", chosenQty, FormatCoinsPlain(totalCost), hk))
+    buyBtn:SetLabel(string.format("КУПИТЬ x%d  |  %s%s", chosenQty, FormatCoinsPlain(totalCost), hk))
     buyBtn:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.95 }, { 1, 1, 1 })
     dealStripe:SetColorTexture(0.06, 0.73, 0.51, 1)
     dealCard:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.75)
@@ -1244,7 +1250,7 @@ local function RenderWatchlist()
     row.name:SetText(nm)
     row.name:SetTextColor(r, g, b)
     row.price:SetText(FormatCoins(lim))
-    row.cap:SetText(cap > 0 and ("|cfff59e0b≤" .. cap .. " шт|r") or "|cff64748bвсе шт|r")
+    row.cap:SetText(cap > 0 and ("|cfff59e0b<= " .. cap .. " шт|r") or "|cff64748bвсе шт|r")
 
     if isSel then
       row:SetBackdropColor(0.11, 0.16, 0.26, 1)
@@ -1294,16 +1300,19 @@ UpdateStatus = function()
   RebuildQueue()
 
   if not state.ahOpen then
-    statusText:SetText("|cfff59e0b● Нет окна АХ|r")
+    statusText:SetText(DOT_AMBER .. " |cfff59e0bНет окна АХ|r")
     statusPill:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.55)
   elseif state.throttled then
-    statusText:SetText("|cfff59e0b● Пауза АХ...|r")
+    statusText:SetText(DOT_AMBER .. " |cfff59e0bПауза АХ...|r")
     statusPill:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.7)
+  elseif state.pendingDeal and ForeverSniperDB.autoScan then
+    statusText:SetText(DOT_GREEN .. " |cff10b981Лот найден|r")
+    statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.85)
   elseif ForeverSniperDB.autoScan then
-    statusText:SetText(string.format("|cff10b981● Скан · %d|r", state.queryCount))
+    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
     statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   else
-    statusText:SetText("|cff94a3b8● Пауза|r")
+    statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
     statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
   end
 
@@ -1323,8 +1332,8 @@ UpdateStatus = function()
     targetNameText:SetText(nm)
     targetNameText:SetTextColor(r, g, b)
     local cap = GetQtyCap(sel)
-    local capText = cap > 0 and string.format("  ·  |cff94a3b8Макс. покупка:|r |cfff59e0b%d шт|r", cap) or ""
-    targetSubText:SetText(string.format("|cff64748bID %d  ·  Лимит:|r %s%s", sel, FormatCoins(ForeverSniperDB.watchlist[sel]), capText))
+    local capText = cap > 0 and string.format("  |  |cff94a3b8Макс. покупка:|r |cfff59e0b%d шт|r", cap) or ""
+    targetSubText:SetText(string.format("|cff64748bID %d  |  Лимит:|r %s%s", sel, FormatCoins(ForeverSniperDB.watchlist[sel]), capText))
     queueCounter:SetText(string.format("|cffcbd5e1%d / %d|r", state.idx, #state.queue))
   else
     itemIcon:SetTexture(134400)
@@ -1387,9 +1396,9 @@ local function SetPendingDeal(deal)
   local hex = string.format("%02x%02x%02x", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
   dealTitle:SetText(string.format("|cff%s%s|r", hex, itemName))
   if cap > 0 and (deal.qty or 1) > cap then
-    dealQtyRight:SetText(string.format("|cff10b981× %d|r |cff94a3b8/ %d шт.|r", cap, deal.qty or 1))
+    dealQtyRight:SetText(string.format("|cff10b981x %d|r |cff94a3b8/ %d шт.|r", cap, deal.qty or 1))
   else
-    dealQtyRight:SetText(string.format("|cff10b981× %d шт.|r", deal.qty or 1))
+    dealQtyRight:SetText(string.format("|cff10b981x %d шт.|r", deal.qty or 1))
   end
   skipBtn:SetFlatEnabled(true)
   RefreshBuyButtonText()
@@ -1415,10 +1424,8 @@ maxQtyBtn:SetScript("OnClick", function()
   end
 end)
 
--- Fast buy flow:
--- * Non-commodities: instant 1-click buyout (no confirmation step)
--- * Commodities: 1st click reserves quote, 2nd click confirms (WoW API hardware-event rule)
-buyBtn:SetScript("OnClick", function(_, mouseButton)
+-- Fast buy flow (shared between mouse click and direct keybinding)
+local function ExecuteBuyAction(mouseButton)
   local deal = state.pendingDeal
   if not deal or not state.ahOpen then return end
 
@@ -1458,12 +1465,18 @@ buyBtn:SetScript("OnClick", function(_, mouseButton)
     state.pauseScanUntil = GetTime() + 2.0
     deal.qty = chosenQty
     deal.stage = "confirm"
+    deal.quoteReady = false
     deal.confirmAt = GetTime()
     RefreshBuyButtonText()
     return
   end
 
   if deal.stage == "confirm" then
+    -- Protect ultra-fast wheel ticks (<150ms) until AH system ready / quote arrives
+    if not deal.quoteReady and (GetTime() - (deal.confirmAt or 0)) < 0.15 then
+      dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
+      return
+    end
     local _, nm = GetItemVisuals(deal.itemID)
     state.lastPurchaseAttempt = {
       itemID = deal.itemID,
@@ -1477,6 +1490,14 @@ buyBtn:SetScript("OnClick", function(_, mouseButton)
     state.pauseScanUntil = GetTime() + 2.0
     ClearPendingDeal()
   end
+end
+
+function ForeverSniper_OnBuyHotkey()
+  ExecuteBuyAction("LeftButton")
+end
+
+buyBtn:SetScript("OnClick", function(_, mouseButton)
+  ExecuteBuyAction(mouseButton)
 end)
 
 skipBtn:SetScript("OnClick", function()
@@ -1582,7 +1603,7 @@ local function SendTargetQuery()
   if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
     if not state.throttled then
       state.throttled = true
-      statusText:SetText("|cfff59e0b● Пауза АХ...|r")
+      statusText:SetText(DOT_AMBER .. " |cfff59e0bПауза АХ...|r")
       statusPill:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.7)
     end
     return
@@ -1598,12 +1619,12 @@ local function SendTargetQuery()
   if rotated then
     UpdateStatus()
   else
-    statusText:SetText(string.format("|cff10b981● Скан · %d|r", state.queryCount))
+    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
     statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   end
 end
 
-scanBtn:SetScript("OnClick", function()
+local function ToggleScan()
   if not ForeverSniperDB.autoScan then
     -- Always apply current setup inputs (ID, price, max qty) before starting scan
     if not ApplyManualTarget() and not ForeverSniperDB.selectedID then
@@ -1617,7 +1638,13 @@ scanBtn:SetScript("OnClick", function()
     state.lastQueryAt = 0
     SendTargetQuery()
   end
-end)
+end
+
+function ForeverSniper_OnScanHotkey()
+  ToggleScan()
+end
+
+scanBtn:SetScript("OnClick", ToggleScan)
 
 -- ============================================================================
 -- Import Modal (Matching Goblin Broker Brand)
@@ -1715,6 +1742,177 @@ importBtn:SetScript("OnClick", function()
 end)
 
 -- ============================================================================
+-- Saved Presets Modal (Save / Load / Delete Watchlist Presets)
+-- ============================================================================
+local pre = CreateFrame("Frame", "ForeverSniperPresetsFrame", UIParent, "BackdropTemplate")
+pre:SetSize(420, 310)
+pre:SetPoint("CENTER")
+pre:SetBackdrop(FLAT_BACKDROP)
+pre:SetBackdropColor(0.043, 0.067, 0.125, 0.98)
+pre:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
+pre:SetFrameStrata("FULLSCREEN_DIALOG")
+pre:EnableMouse(true)
+pre:SetMovable(true)
+pre:RegisterForDrag("LeftButton")
+pre:SetScript("OnDragStart", pre.StartMoving)
+pre:SetScript("OnDragStop", pre.StopMovingOrSizing)
+pre:Hide()
+
+local preAccent = pre:CreateTexture(nil, "ARTWORK")
+preAccent:SetHeight(2)
+preAccent:SetPoint("TOPLEFT", 1, -1)
+preAccent:SetPoint("TOPRIGHT", -1, -1)
+preAccent:SetColorTexture(1, 1, 1, 1)
+preAccent:SetGradient("HORIZONTAL", CreateColor(0.92, 0.70, 0.03, 1), CreateColor(0.06, 0.73, 0.51, 1))
+
+local preTitle = pre:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+preTitle:SetPoint("TOPLEFT", 16, -14)
+preTitle:SetText("|cfff59e0bПресеты списков отслеживания|r")
+
+local preClose = CreateFlatButton(nil, pre, 24, 24, "X")
+preClose:SetPoint("TOPRIGHT", -14, -12)
+preClose:SetColors({ 0.10, 0.13, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.22, 0.28, 0.40, 1 }, { 0.85, 0.89, 0.95 })
+preClose:SetScript("OnClick", function() pre:Hide() end)
+
+local preNameInput = CreateFrame("EditBox", nil, pre, "BackdropTemplate")
+StyleFlatBox(preNameInput, 232, 26)
+preNameInput:SetPoint("TOPLEFT", 16, -46)
+
+local preSaveBtn = CreateFlatButton(nil, pre, 148, 26, "Сохранить текущий")
+preSaveBtn:SetPoint("LEFT", preNameInput, "RIGHT", 8, 0)
+preSaveBtn:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
+
+local preListBox = CreateFrame("Frame", nil, pre, "BackdropTemplate")
+preListBox:SetPoint("TOPLEFT", 16, -82)
+preListBox:SetPoint("BOTTOMRIGHT", -16, 14)
+preListBox:SetBackdrop(FLAT_BACKDROP)
+preListBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
+preListBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
+
+local preScroll = CreateFrame("ScrollFrame", "ForeverSniperPreScroll", preListBox, "UIPanelScrollFrameTemplate")
+preScroll:SetPoint("TOPLEFT", 4, -4)
+preScroll:SetPoint("BOTTOMRIGHT", -14, 4)
+
+local preScrollBar = _G["ForeverSniperPreScrollScrollBar"]
+if preScrollBar then
+  local up = _G["ForeverSniperPreScrollScrollBarScrollUpButton"]
+  local dn = _G["ForeverSniperPreScrollScrollBarScrollDownButton"]
+  if up then up:Hide(); up:SetSize(1, 1) end
+  if dn then dn:Hide(); dn:SetSize(1, 1) end
+  local thumb = preScrollBar:GetThumbTexture()
+  if thumb then
+    thumb:SetColorTexture(0.24, 0.32, 0.46, 0.85)
+    thumb:SetWidth(4)
+  end
+end
+
+local preContent = CreateFrame("Frame", nil, preScroll)
+preContent:SetSize(366, 200)
+preScroll:SetScrollChild(preContent)
+local preRows = {}
+
+local function CopyTableShallow(tbl)
+  local out = {}
+  for k, v in pairs(tbl or {}) do out[k] = v end
+  return out
+end
+
+local function RenderPresetsList()
+  ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+  for _, r in ipairs(preRows) do r:Hide() end
+
+  local names = {}
+  for nm in pairs(ForeverSniperDB.presets) do table.insert(names, nm) end
+  table.sort(names)
+
+  local y = 0
+  for i, nm in ipairs(names) do
+    local p = ForeverSniperDB.presets[nm]
+    local row = preRows[i]
+    if not row then
+      row = CreateFrame("Frame", nil, preContent, "BackdropTemplate")
+      row:SetSize(362, 28)
+      row:SetBackdrop(FLAT_BACKDROP)
+      row:SetBackdropColor(0.055, 0.078, 0.135, 1)
+      row:SetBackdropBorderColor(0.16, 0.22, 0.34, 0.85)
+
+      row.nm = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      row.nm:SetPoint("LEFT", 8, 0); row.nm:SetWidth(182); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
+
+      row.cnt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      row.cnt:SetPoint("LEFT", row.nm, "RIGHT", 4, 0); row.cnt:SetWidth(54); row.cnt:SetJustifyH("RIGHT")
+
+      row.load = CreateFlatButton(nil, row, 78, 22, "Загрузить")
+      row.load:SetPoint("RIGHT", -28, 0)
+      row.load:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.62, 0.44, 0.03, 1 }, { 0.92, 0.70, 0.03, 0.85 }, { 1, 0.96, 0.85 })
+
+      row.del = CreateFlatButton(nil, row, 20, 22, "x")
+      row.del:SetPoint("RIGHT", -4, 0)
+      row.del:SetColors({ 0.12, 0.15, 0.22, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.20, 0.26, 0.36, 1 }, { 0.75, 0.80, 0.88 })
+
+      preRows[i] = row
+    end
+
+    local cnt = 0
+    for _ in pairs(p.watchlist or {}) do cnt = cnt + 1 end
+
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", 0, -y)
+    row.nm:SetText("|cfff8fafc" .. nm .. "|r")
+    row.cnt:SetText("|cff94a3b8" .. cnt .. " поз.|r")
+
+    row.load:SetScript("OnClick", function()
+      ForeverSniperDB.watchlist = CopyTableShallow(p.watchlist)
+      ForeverSniperDB.qtyLimits = CopyTableShallow(p.qtyLimits)
+      ForeverSniperDB.selectedID = nil
+      pre:Hide()
+      ClearPendingDeal()
+      UpdateStatus()
+      SyncInputsFromSelected()
+      print(string.format("|cfff59e0bGoblin Broker:|r загружен пресет «%s» (%d поз.).", nm, cnt))
+    end)
+
+    row.del:SetScript("OnClick", function()
+      ForeverSniperDB.presets[nm] = nil
+      RenderPresetsList()
+    end)
+
+    row:Show()
+    y = y + 30
+  end
+
+  preContent:SetHeight(math.max(200, y))
+end
+
+local function SaveCurrentPreset()
+  local nm = (preNameInput:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if nm == "" then
+    print("|cfff59e0bGoblin Broker:|r введите название пресета.")
+    return
+  end
+  ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+  ForeverSniperDB.presets[nm] = {
+    watchlist = CopyTableShallow(ForeverSniperDB.watchlist),
+    qtyLimits = CopyTableShallow(ForeverSniperDB.qtyLimits),
+  }
+  preNameInput:SetText("")
+  preNameInput:ClearFocus()
+  RenderPresetsList()
+  print(string.format("|cff10b981Goblin Broker:|r пресет «%s» сохранён.", nm))
+end
+
+preSaveBtn:SetScript("OnClick", SaveCurrentPreset)
+preNameInput:SetScript("OnEnterPressed", SaveCurrentPreset)
+presetsBtn:SetScript("OnClick", function()
+  if pre:IsShown() then
+    pre:Hide()
+  else
+    RenderPresetsList()
+    pre:Show()
+  end
+end)
+
+-- ============================================================================
 -- 1-Second Polling Loop
 -- ============================================================================
 f:SetScript("OnUpdate", function()
@@ -1745,6 +1943,35 @@ end)
 -- ============================================================================
 -- Events, Minimap Button & AH Hook
 -- ============================================================================
+local function RefreshOverrideBindings()
+  if not ClearOverrideBindings or not SetOverrideBindingClick then return end
+  ClearOverrideBindings(f)
+  if state.ahOpen and f:IsShown() and GetBindingKey then
+    local k1, k2 = GetBindingKey("FOREVERSNIPER_BUY")
+    if k1 and k1 ~= "" then SetOverrideBindingClick(f, true, k1, "ForeverSniperBuyBtn", "LeftButton") end
+    if k2 and k2 ~= "" then SetOverrideBindingClick(f, true, k2, "ForeverSniperBuyBtn", "LeftButton") end
+  end
+end
+
+f:EnableMouseWheel(true)
+f:SetScript("OnMouseWheel", function(_, delta)
+  if not state.ahOpen or not state.pendingDeal or not GetBindingKey then return end
+  local k1, k2 = GetBindingKey("FOREVERSNIPER_BUY")
+  local wantUp = (delta > 0)
+  local shift = IsShiftKeyDown and IsShiftKeyDown()
+  local ctrl = IsControlKeyDown and IsControlKeyDown()
+  local alt = IsAltKeyDown and IsAltKeyDown()
+  local prefix = (shift and "SHIFT-" or "") .. (ctrl and "CTRL-" or "") .. (alt and "ALT-" or "")
+  local ev = prefix .. (wantUp and "MOUSEWHEELUP" or "MOUSEWHEELDOWN")
+  if ev == k1 or ev == k2 then
+    ExecuteBuyAction("LeftButton")
+  end
+end)
+
+f:HookScript("OnHide", function()
+  if ClearOverrideBindings then ClearOverrideBindings(f) end
+end)
+
 local function ToggleSniperWindow()
   if f:IsShown() then
     f:Hide()
@@ -1752,24 +1979,28 @@ local function ToggleSniperWindow()
     f:Show()
     UpdateStatus()
     SyncInputsFromSelected()
+    RefreshOverrideBindings()
   end
 end
 
--- Minimap Toggle Button with Goblin Broker Logo #1
-local mmBtn = CreateFrame("Button", "ForeverSniperMinimapBtn", Minimap, "BackdropTemplate")
-mmBtn:SetSize(30, 30)
+function ForeverSniper_OnToggleHotkey()
+  ToggleSniperWindow()
+end
+
+-- Minimap Toggle Button (Modern Rounded Coin Badge — clean on Minimap & Button Bags)
+local MINIMAP_ICON_PATH = "Interface\\AddOns\\ForeverSniper\\minimap_icon.tga"
+local mmBtn = CreateFrame("Button", "ForeverSniperMinimapBtn", Minimap)
+mmBtn:SetSize(32, 32)
 mmBtn:SetFrameStrata("MEDIUM")
 mmBtn:SetFrameLevel(8)
-mmBtn:SetBackdrop(FLAT_BACKDROP)
-mmBtn:SetBackdropColor(0.043, 0.067, 0.125, 0.96)
-mmBtn:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.85)
 mmBtn:RegisterForClicks("LeftButtonUp")
 mmBtn:RegisterForDrag("RightButton")
+mmBtn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
 local mmLogo = mmBtn:CreateTexture(nil, "ARTWORK")
-mmLogo:SetSize(22, 22)
-mmLogo:SetPoint("CENTER")
-mmLogo:SetTexture(LOGO_PATH)
+mmLogo:SetAllPoints()
+mmLogo:SetTexture(MINIMAP_ICON_PATH)
+mmBtn.icon = mmLogo
 
 local function UpdateMinimapPos()
   if not Minimap then return end
@@ -1800,7 +2031,7 @@ mmBtn:SetScript("OnClick", function()
 end)
 
 mmBtn:SetScript("OnEnter", function(self)
-  self:SetBackdropBorderColor(0.06, 0.73, 0.51, 1)
+  mmLogo:SetVertexColor(1.08, 1.08, 1.08)
   if GameTooltip then
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cfff59e0bGoblin Broker|r|cfff8fafc: Forever|r")
@@ -1811,7 +2042,7 @@ mmBtn:SetScript("OnEnter", function(self)
 end)
 
 mmBtn:SetScript("OnLeave", function(self)
-  self:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.85)
+  mmLogo:SetVertexColor(1, 1, 1)
   if GameTooltip then GameTooltip:Hide() end
 end)
 
@@ -1859,6 +2090,8 @@ f:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED")
 f:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED")
 f:RegisterEvent("COMMODITY_PURCHASE_SUCCEEDED")
 f:RegisterEvent("COMMODITY_PURCHASE_FAILED")
+pcall(f.RegisterEvent, f, "COMMODITY_PRICE_UPDATED")
+pcall(f.RegisterEvent, f, "COMMODITY_PRICE_UNAVAILABLE")
 f:RegisterEvent("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
 f:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
 
@@ -1876,6 +2109,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     HookAuctionHouseFrame()
   elseif event == "UPDATE_BINDINGS" then
     RefreshBuyButtonText()
+    RefreshOverrideBindings()
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
     state.throttled = true
     state.queryInterval = math.min(1.0, (state.queryInterval or 0.65) + 0.15)
@@ -1888,6 +2122,14 @@ f:SetScript("OnEvent", function(_, event, arg1)
     UpdateStatus()
   elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
     state.throttled = false
+    if state.pendingDeal then
+      if state.pendingDeal.stage == "confirm" then
+        state.pendingDeal.quoteReady = true
+        dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+      elseif state.pendingDeal.stage == "ready" then
+        dealBadge:SetText(DOT_GREEN .. " |cff10b981ГОТОВО - ЖМИТЕ КУПИТЬ|r")
+      end
+    end
     if GetTime() >= (state.pauseScanUntil or 0) then
       state.lastQueryAt = 0 -- Fire next query on the very next frame
     end
@@ -1899,11 +2141,25 @@ f:SetScript("OnEvent", function(_, event, arg1)
     f:Show()
     UpdateStatus()
     SyncInputsFromSelected()
+    RefreshOverrideBindings()
   elseif event == "AUCTION_HOUSE_CLOSED" then
     state.ahOpen = false
     ForeverSniperDB.autoScan = false
     ClearPendingDeal()
     UpdateStatus()
+    RefreshOverrideBindings()
+  elseif event == "COMMODITY_PRICE_UPDATED" then
+    if state.pendingDeal and state.pendingDeal.stage == "confirm" then
+      state.pendingDeal.quoteReady = true
+      dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+    end
+  elseif event == "COMMODITY_PRICE_UNAVAILABLE" then
+    if state.pendingDeal and state.pendingDeal.stage == "confirm" then
+      state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот уже раскупили - перескан...|r"
+      RefreshSessionBar()
+      ClearPendingDeal()
+      state.lastQueryAt = 0
+    end
   elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then
     local att = state.lastPurchaseAttempt
     if att then
@@ -1913,7 +2169,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "COMMODITY_PURCHASE_FAILED" then
     if state.lastPurchaseAttempt then
       state.lastPurchaseAttempt = nil
-      state.sessionBuys.lastOutcome = "|cfff43f5e● Лот перехвачен — перескан...|r"
+      state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот перехвачен - перескан...|r"
       RefreshSessionBar()
     end
     state.lastQueryAt = 0
@@ -1977,7 +2233,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
         dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
         dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText("|cfff59e0b● ЦЕНА ВЫШЕ ЛИМИТА|r")
+        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r")
         dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
         dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
         dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))
@@ -2028,7 +2284,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
         dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
         dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText("|cfff59e0b● ЦЕНА ВЫШЕ ЛИМИТА|r")
+        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r")
         dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
         dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
         dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))

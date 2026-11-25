@@ -1,11 +1,11 @@
 <Bindings>
-  <Binding name="CLICK ForeverSniperBuyBtn:LeftButton" header="FOREVERSNIPER" category="Goblin Broker: Forever">
-    Купить / Подтвердить лот
+  <Binding name="FOREVERSNIPER_BUY" header="FOREVERSNIPER" category="Goblin Broker: Forever">
+    if ForeverSniper_OnBuyHotkey then ForeverSniper_OnBuyHotkey() end
   </Binding>
-  <Binding name="CLICK ForeverSniperScanBtn:LeftButton" category="Goblin Broker: Forever">
-    Старт / Пауза скана
+  <Binding name="FOREVERSNIPER_SCAN" category="Goblin Broker: Forever">
+    if ForeverSniper_OnScanHotkey then ForeverSniper_OnScanHotkey() end
   </Binding>
-  <Binding name="CLICK ForeverSniperMinimapBtn:LeftButton" category="Goblin Broker: Forever">
-    Показать / Скрыть окно
+  <Binding name="FOREVERSNIPER_TOGGLE" category="Goblin Broker: Forever">
+    if ForeverSniper_OnToggleHotkey then ForeverSniper_OnToggleHotkey() end
   </Binding>
 </Bindings>
