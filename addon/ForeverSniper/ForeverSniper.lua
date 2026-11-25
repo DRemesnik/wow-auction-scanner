@@ -86,6 +86,10 @@ local FLAT_BACKDROP = {
 local ICON_GOLD   = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:1:0|t"
 local ICON_SILVER = "|TInterface\\MoneyFrame\\UI-SilverIcon:12:12:1:0|t"
 local ICON_COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:12:12:1:0|t"
+local DOT_GREEN   = "|TInterface\\COMMON\\Indicator-Green:11:11:0:0|t"
+local DOT_AMBER   = "|TInterface\\COMMON\\Indicator-Yellow:11:11:0:0|t"
+local DOT_RED     = "|TInterface\\COMMON\\Indicator-Red:11:11:0:0|t"
+local DOT_GRAY    = "|TInterface\\COMMON\\Indicator-Gray:11:11:0:0|t"
 
 local function FormatCoins(copper)
   if not copper or copper <= 0 then
@@ -535,14 +539,17 @@ end)
 -- ============================================================================
 local wlHeader = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 wlHeader:SetPoint("TOPLEFT", cfgCard, "BOTTOMLEFT", 2, -12)
+wlHeader:SetJustifyH("LEFT")
+wlHeader:SetWordWrap(false)
 wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
 
 local rotateBtn = CreateFlatButton(nil, f, 128, 20, DOT_GRAY .. " По кругу: ВЫКЛ")
 rotateBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -9)
 
-local presetsBtn = CreateFlatButton(nil, f, 84, 20, "Пресеты")
+local presetsBtn = CreateFlatButton(nil, f, 90, 20, "Пресеты")
 presetsBtn:SetPoint("RIGHT", rotateBtn, "LEFT", -6, 0)
 presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.55 }, { 0.96, 0.85, 0.55 })
+wlHeader:SetPoint("RIGHT", presetsBtn, "LEFT", -8, 0)
 
 local function RefreshRotateBtn()
   if ForeverSniperDB.rotateScan then
@@ -668,6 +675,8 @@ local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", execRow, 318, 36, "Нет
 buyBtn:SetPoint("RIGHT", 0, 0)
 buyBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 buyBtn.label:SetFontObject("GameFontNormal")
+buyBtn.label:SetWidth(306)
+buyBtn.label:SetWordWrap(false)
 buyBtn:SetColors({ 0.11, 0.15, 0.22, 1 }, { 0.11, 0.15, 0.22, 1 }, { 0.20, 0.27, 0.38, 1 }, { 0.72, 0.78, 0.88 })
 buyBtn:SetFlatEnabled(false)
 
@@ -824,15 +833,15 @@ logColHdr:SetBackdropColor(0.067, 0.094, 0.153, 1)
 logColHdr:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
 
 local chTime = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chTime:SetPoint("LEFT", 8, 0); chTime:SetWidth(54); chTime:SetJustifyH("LEFT"); chTime:SetText("|cff94a3b8Время|r")
+chTime:SetPoint("LEFT", 8, 0); chTime:SetWidth(52); chTime:SetJustifyH("LEFT"); chTime:SetText("|cff94a3b8Время|r")
 local chItem = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chItem:SetPoint("LEFT", chTime, "RIGHT", 6, 0); chItem:SetWidth(186); chItem:SetJustifyH("LEFT"); chItem:SetText("|cff94a3b8Предмет|r")
+chItem:SetPoint("LEFT", chTime, "RIGHT", 6, 0); chItem:SetWidth(174); chItem:SetJustifyH("LEFT"); chItem:SetText("|cff94a3b8Предмет|r")
 local chQty = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chQty:SetPoint("LEFT", chItem, "RIGHT", 6, 0); chQty:SetWidth(48); chQty:SetJustifyH("RIGHT"); chQty:SetText("|cff94a3b8Шт|r")
+chQty:SetPoint("LEFT", chItem, "RIGHT", 6, 0); chQty:SetWidth(44); chQty:SetJustifyH("RIGHT"); chQty:SetText("|cff94a3b8Шт|r")
 local chUnit = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chUnit:SetPoint("LEFT", chQty, "RIGHT", 8, 0); chUnit:SetWidth(82); chUnit:SetJustifyH("RIGHT"); chUnit:SetText("|cff94a3b8За шт|r")
+chUnit:SetPoint("LEFT", chQty, "RIGHT", 6, 0); chUnit:SetWidth(80); chUnit:SetJustifyH("RIGHT"); chUnit:SetText("|cff94a3b8За шт|r")
 local chTotal = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chTotal:SetPoint("RIGHT", -16, 0); chTotal:SetWidth(84); chTotal:SetJustifyH("RIGHT"); chTotal:SetText("|cff94a3b8Итого|r")
+chTotal:SetPoint("RIGHT", -16, 0); chTotal:SetWidth(82); chTotal:SetJustifyH("RIGHT"); chTotal:SetText("|cff94a3b8Итого|r")
 
 local logBox = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
 logBox:SetPoint("TOPLEFT", logColHdr, "BOTTOMLEFT", 0, -2)
@@ -963,16 +972,16 @@ local function RenderLogFrame()
       row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
       row.nm = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.nm:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.nm:SetWidth(164); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
+      row.nm:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.nm:SetWidth(154); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
 
       row.q = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.q:SetPoint("LEFT", row.nm, "RIGHT", 6, 0); row.q:SetWidth(46); row.q:SetJustifyH("RIGHT")
+      row.q:SetPoint("LEFT", row.nm, "RIGHT", 6, 0); row.q:SetWidth(44); row.q:SetJustifyH("RIGHT"); row.q:SetWordWrap(false)
 
       row.u = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.u:SetPoint("LEFT", row.q, "RIGHT", 8, 0); row.u:SetWidth(82); row.u:SetJustifyH("RIGHT")
+      row.u:SetPoint("LEFT", row.q, "RIGHT", 6, 0); row.u:SetWidth(80); row.u:SetJustifyH("RIGHT"); row.u:SetWordWrap(false)
 
       row.tot = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.tot:SetPoint("RIGHT", -6, 0); row.tot:SetWidth(84); row.tot:SetJustifyH("RIGHT")
+      row.tot:SetPoint("RIGHT", -6, 0); row.tot:SetWidth(82); row.tot:SetJustifyH("RIGHT"); row.tot:SetWordWrap(false)
 
       logRows[idx] = row
     end
@@ -1184,6 +1193,12 @@ local function SyncInputsFromSelected()
     copperInput:SetText(tostring(lim % 100))
     local cap = GetQtyCap(sel)
     maxQtyLimitInput:SetText(cap > 0 and tostring(cap) or "")
+  else
+    idInput:SetText("")
+    goldInput:SetText("")
+    silverInput:SetText("")
+    copperInput:SetText("")
+    maxQtyLimitInput:SetText("")
   end
 end
 
@@ -1216,24 +1231,27 @@ local function RenderWatchlist()
 
       row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.name:SetPoint("LEFT", row.ico, "RIGHT", 6, 0)
-      row.name:SetWidth(134)
+      row.name:SetWidth(124)
       row.name:SetJustifyH("LEFT")
       row.name:SetWordWrap(false)
 
       row.price = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.price:SetPoint("LEFT", row.name, "RIGHT", 4, 0)
-      row.price:SetWidth(92)
+      row.price:SetWidth(88)
       row.price:SetJustifyH("LEFT")
+      row.price:SetWordWrap(false)
 
       row.live = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.live:SetPoint("LEFT", row.price, "RIGHT", 4, 0)
-      row.live:SetWidth(110)
+      row.live:SetWidth(114)
       row.live:SetJustifyH("LEFT")
+      row.live:SetWordWrap(false)
 
       row.cap = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.cap:SetPoint("LEFT", row.live, "RIGHT", 4, 0)
-      row.cap:SetWidth(58)
+      row.cap:SetWidth(52)
       row.cap:SetJustifyH("RIGHT")
+      row.cap:SetWordWrap(false)
 
       row.del = CreateFlatButton(nil, row, 20, 20, "x")
       row.del:SetPoint("RIGHT", -4, 0)
@@ -1441,9 +1459,10 @@ qtyInput:SetScript("OnTextChanged", function()
 end)
 
 maxQtyBtn:SetScript("OnClick", function()
-  if state.pendingDeal and state.pendingDeal.qty then
+  if state.pendingDeal and (state.pendingDeal.maxAvailQty or state.pendingDeal.qty) then
     local cap = GetQtyCap(state.pendingDeal.itemID)
-    local effectiveMax = (cap > 0) and math.min(state.pendingDeal.qty, cap) or state.pendingDeal.qty
+    local avail = state.pendingDeal.maxAvailQty or state.pendingDeal.qty
+    local effectiveMax = (cap > 0) and math.min(avail, cap) or avail
     qtyInput:SetText(tostring(effectiveMax))
     qtyInput:ClearFocus()
     RefreshBuyButtonText()
@@ -1489,6 +1508,7 @@ local function ExecuteBuyAction(mouseButton)
     end
     C_AuctionHouse.StartCommoditiesPurchase(deal.itemID, chosenQty)
     state.pauseScanUntil = GetTime() + 2.0
+    deal.maxAvailQty = deal.maxAvailQty or deal.qty
     deal.qty = chosenQty
     deal.stage = "confirm"
     deal.quoteReady = false
@@ -1749,8 +1769,12 @@ local function RunImport(replaceAll)
   if replaceAll then
     ForeverSniperDB.qtyLimits = {}
     ForeverSniperDB.selectedID = firstID
+    ForeverSniperDB.activePreset = nil
   elseif not ForeverSniperDB.selectedID then
     ForeverSniperDB.selectedID = firstID
+  end
+  if not replaceAll and SyncActivePresetSnapshot then
+    SyncActivePresetSnapshot()
   end
   imp:Hide()
   ClearPendingDeal()
@@ -1801,9 +1825,20 @@ preClose:SetPoint("TOPRIGHT", -14, -12)
 preClose:SetColors({ 0.10, 0.13, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.22, 0.28, 0.40, 1 }, { 0.85, 0.89, 0.95 })
 preClose:SetScript("OnClick", function() pre:Hide() end)
 
+local preExitBtn = CreateFlatButton(nil, pre, 126, 22, "Выйти из шаблона")
+preExitBtn:SetPoint("RIGHT", preClose, "LEFT", -8, 0)
+preExitBtn:SetColors({ 0.14, 0.17, 0.25, 1 }, { 0.24, 0.28, 0.38, 1 }, { 0.28, 0.34, 0.46, 1 }, { 0.85, 0.90, 0.96 })
+
 local preNameInput = CreateFrame("EditBox", nil, pre, "BackdropTemplate")
 StyleFlatBox(preNameInput, 170, 26)
 preNameInput:SetPoint("TOPLEFT", 16, -46)
+
+local prePlaceholder = preNameInput:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+prePlaceholder:SetPoint("LEFT", 8, 0)
+prePlaceholder:SetText("|cff64748bНазвание шаблона...|r")
+preNameInput:HookScript("OnTextChanged", function(self)
+  if (self:GetText() or "") == "" then prePlaceholder:Show() else prePlaceholder:Hide() end
+end)
 
 local preSaveBtn = CreateFlatButton(nil, pre, 114, 26, "Сохранить")
 preSaveBtn:SetPoint("LEFT", preNameInput, "RIGHT", 6, 0)
@@ -1842,6 +1877,13 @@ preContent:SetSize(366, 200)
 preScroll:SetScrollChild(preContent)
 local preRows = {}
 
+local preEmptyText = preListBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+preEmptyText:SetPoint("CENTER")
+preEmptyText:SetWidth(330)
+preEmptyText:SetJustifyH("CENTER")
+preEmptyText:SetText("|cff64748bНет сохранённых шаблонов.\nВведите название выше и нажмите «+ Новый» или «Сохранить».|r")
+preEmptyText:Hide()
+
 local function CopyTableShallow(tbl)
   local out = {}
   for k, v in pairs(tbl or {}) do out[k] = v end
@@ -1862,9 +1904,21 @@ local function RenderPresetsList()
   ForeverSniperDB.presets = ForeverSniperDB.presets or {}
   for _, r in ipairs(preRows) do r:Hide() end
 
+  if ForeverSniperDB.activePreset then
+    preExitBtn:SetFlatEnabled(true)
+  else
+    preExitBtn:SetFlatEnabled(false)
+  end
+
   local names = {}
   for nm in pairs(ForeverSniperDB.presets) do table.insert(names, nm) end
   table.sort(names)
+
+  if #names == 0 then
+    preEmptyText:Show()
+  else
+    preEmptyText:Hide()
+  end
 
   local y = 0
   for i, nm in ipairs(names) do
@@ -1899,7 +1953,15 @@ local function RenderPresetsList()
 
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", 0, -y)
-    row.nm:SetText("|cfff8fafc" .. nm .. "|r")
+    if nm == ForeverSniperDB.activePreset then
+      row:SetBackdropColor(0.03, 0.16, 0.12, 1)
+      row:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.9)
+      row.nm:SetText("|cff10b981" .. nm .. "|r")
+    else
+      row:SetBackdropColor(0.055, 0.078, 0.135, 1)
+      row:SetBackdropBorderColor(0.16, 0.22, 0.34, 0.85)
+      row.nm:SetText("|cfff8fafc" .. nm .. "|r")
+    end
     row.cnt:SetText("|cff94a3b8" .. cnt .. " поз.|r")
 
     row.load:SetScript("OnClick", function()
@@ -1964,6 +2026,12 @@ local function SaveCurrentPreset(emptyNew)
   RenderPresetsList()
   print(string.format("|cff10b981Goblin Broker:|r шаблон «%s» сохранён.", nm))
 end
+
+preExitBtn:SetScript("OnClick", function()
+  ForeverSniperDB.activePreset = nil
+  UpdateStatus()
+  RenderPresetsList()
+end)
 
 preSaveBtn:SetScript("OnClick", function() SaveCurrentPreset(false) end)
 preNewBtn:SetScript("OnClick", function() SaveCurrentPreset(true) end)
@@ -2328,26 +2396,40 @@ f:SetScript("OnEvent", function(_, event, arg1)
     local num = C_AuctionHouse.GetNumItemSearchResults(arg1) or 0
     local found = false
     local lowestSeen = nil
+    local matchCount = 0
+    local bestAuction = nil
     for i = 1, num do
       local res = C_AuctionHouse.GetItemSearchResultInfo(arg1, i)
       if res and res.buyoutAmount and res.buyoutAmount > 0 then
         if not lowestSeen or res.buyoutAmount < lowestSeen then lowestSeen = res.buyoutAmount end
         if res.buyoutAmount <= maxPrice then
-          local info = C_AuctionHouse.GetItemKeyInfo(arg1)
-          SetPendingDeal({
-            itemID = itemID,
-            isCommodity = false,
-            auctionID = res.auctionID,
-            unitPrice = res.buyoutAmount,
-            qty = 1,
-            maxPrice = maxPrice,
-            name = info and info.itemName or nil,
-            stage = "ready",
-          })
-          found = true
-          break
+          matchCount = matchCount + 1
+          if not bestAuction or res.buyoutAmount < bestAuction.buyoutAmount then
+            bestAuction = res
+          end
         end
       end
+    end
+    state.lastSeenByItem = state.lastSeenByItem or {}
+    state.lastSeenByItem[itemID] = {
+      lowestPrice = lowestSeen,
+      availBelow = matchCount,
+      updatedAt = GetTime(),
+    }
+    RenderWatchlist()
+    if bestAuction then
+      local info = C_AuctionHouse.GetItemKeyInfo(arg1)
+      SetPendingDeal({
+        itemID = itemID,
+        isCommodity = false,
+        auctionID = bestAuction.auctionID,
+        unitPrice = bestAuction.buyoutAmount,
+        qty = 1,
+        maxPrice = maxPrice,
+        name = info and info.itemName or nil,
+        stage = "ready",
+      })
+      found = true
     end
     if not found then
       ClearPendingDeal(true)
