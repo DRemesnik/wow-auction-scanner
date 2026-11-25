@@ -971,8 +971,17 @@ def render_dashboard_html(data: dict) -> str:
   .insp-kv {{ background: var(--rail); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }}
   .insp-k {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
   .insp-v {{ font-family: "Fira Code", monospace; font-size: 14px; font-weight: 600; margin-top: 3px; }}
-  .prof-tabs {{ display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; margin-bottom: 10px; }}
+  .prof-tabs-wrap {{ position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }}
+  .prof-tabs {{ display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; flex: 1; min-width: 0; padding: 2px 0; }}
   .prof-tabs::-webkit-scrollbar {{ display: none; }}
+  .tabs-arrow {{
+    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--card); color: var(--text); border: 1px solid var(--border-strong);
+    display: grid; place-items: center; cursor: pointer; font-size: 14px; line-height: 1;
+    transition: all .14s ease;
+  }}
+  .tabs-arrow:hover {{ border-color: var(--accent); color: var(--accent); background: var(--card-alt); }}
+  .tabs-arrow.hidden {{ display: none; }}
   .prof-tab {{
     background: var(--card); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; flex-shrink: 0;
     border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 500;
@@ -1154,7 +1163,11 @@ def render_dashboard_html(data: dict) -> str:
           <h2 class="section-title">Обозреватель рынка и крафта</h2>
           <span id="countInfo" class="meta"></span>
         </div>
-        <div class="prof-tabs" id="profTabs">{prof_tabs_html}</div>
+        <div class="prof-tabs-wrap">
+          <button class="tabs-arrow hidden" id="tabsPrevBtn" title="Листать влево">‹</button>
+          <div class="prof-tabs" id="profTabs">{prof_tabs_html}</div>
+          <button class="tabs-arrow" id="tabsNextBtn" title="Листать вправо">›</button>
+        </div>
         <div class="controls" style="margin-bottom:12px;">
           <button class="btn" id="onlyFavsBtn">★ Избранное (<span id="favCount">0</span>)</button>
           <button class="btn" id="onlyCraftableBtn">Только крафтовые</button>
@@ -1431,7 +1444,7 @@ function drawDynamicsChart(item) {{
   const tickIndices = [];
   for (let i = 0; i < pts.length; i += tickStep) tickIndices.push(i);
   if (tickIndices[tickIndices.length - 1] !== pts.length - 1) {{
-    if (pts.length - 1 - tickIndices[tickIndices.length - 1] < tickStep * 0.45 && tickIndices.length > 1) {{
+    if (pts.length - 1 - tickIndices[tickIndices.length - 1] < tickStep * 0.75 && tickIndices.length > 1) {{
       tickIndices[tickIndices.length - 1] = pts.length - 1;
     }} else {{
       tickIndices.push(pts.length - 1);
@@ -1669,6 +1682,27 @@ document.querySelectorAll(".nav-btn[data-view]").forEach(btn => {{
 document.querySelectorAll(".prof-tab[data-view]").forEach(tab => {{
   tab.addEventListener("click", () => setActiveView(tab.dataset.view, tab.textContent.replace(/\d+$/, "").trim()));
 }});
+(() => {{
+  const tabsEl = document.getElementById("profTabs");
+  const prevBtn = document.getElementById("tabsPrevBtn");
+  const nextBtn = document.getElementById("tabsNextBtn");
+  if (!tabsEl || !prevBtn || !nextBtn) return;
+  const syncArrows = () => {{
+    prevBtn.classList.toggle("hidden", tabsEl.scrollLeft <= 4);
+    nextBtn.classList.toggle("hidden", tabsEl.scrollLeft + tabsEl.clientWidth >= tabsEl.scrollWidth - 4);
+  }};
+  prevBtn.addEventListener("click", () => tabsEl.scrollBy({{ left: -240, behavior: "smooth" }}));
+  nextBtn.addEventListener("click", () => tabsEl.scrollBy({{ left: 240, behavior: "smooth" }}));
+  tabsEl.addEventListener("scroll", syncArrows, {{ passive: true }});
+  tabsEl.addEventListener("wheel", e => {{
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {{
+      e.preventDefault();
+      tabsEl.scrollLeft += e.deltaY;
+    }}
+  }}, {{ passive: false }});
+  window.addEventListener("resize", syncArrows);
+  setTimeout(syncArrows, 50);
+}})();
 document.getElementById("onlyFavsBtn").addEventListener("click", e => {{
   onlyFavs = !onlyFavs;
   e.currentTarget.classList.toggle("active", onlyFavs);
