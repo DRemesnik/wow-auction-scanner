@@ -84,10 +84,6 @@ local FLAT_BACKDROP = {
 local ICON_GOLD   = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:1:0|t"
 local ICON_SILVER = "|TInterface\\MoneyFrame\\UI-SilverIcon:12:12:1:0|t"
 local ICON_COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:12:12:1:0|t"
-local DOT_GREEN = "|TInterface\\COMMON\\Indicator-Green:11:11:0:0|t"
-local DOT_AMBER = "|TInterface\\COMMON\\Indicator-Yellow:11:11:0:0|t"
-local DOT_RED   = "|TInterface\\COMMON\\Indicator-Red:11:11:0:0|t"
-local DOT_GRAY  = "|TInterface\\COMMON\\Indicator-Gray:11:11:0:0|t"
 
 local function FormatCoins(copper)
   if not copper or copper <= 0 then
@@ -282,7 +278,7 @@ title:SetText("|cfff59e0bGoblin Broker|r|cfff8fafc: Forever|r")
 
 local subtitle = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("BOTTOMLEFT", brandMark, "BOTTOMRIGHT", 10, 1)
-subtitle:SetText("|cff94a3b8EU Орда | AH Снайпер (1с)|r")
+subtitle:SetText("|cff94a3b8EU Орда · AH Снайпер (1с)|r")
 
 -- Close button
 local closeBtn = CreateFlatButton(nil, f, 26, 26, "X")
@@ -300,7 +296,7 @@ statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
 
 local statusText = statusPill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 statusText:SetPoint("CENTER")
-statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
+statusText:SetText("|cff94a3b8● Пауза|r")
 
 -- Sound Alert Toggle (works in background via Sound_EnableSoundWhenGameIsInBG)
 local soundBtn = CreateFlatButton(nil, f, 88, 26, "Звук: ВКЛ")
@@ -308,10 +304,10 @@ soundBtn:SetPoint("RIGHT", statusPill, "LEFT", -6, 0)
 
 local function RefreshSoundBtn()
   if IsSoundEnabled() then
-    soundBtn:SetLabel(DOT_GREEN .. " Звук: ВКЛ")
+    soundBtn:SetLabel("|cff10b981●|r Звук: ВКЛ")
     soundBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
   else
-    soundBtn:SetLabel(DOT_GRAY .. " Звук: ВЫКЛ")
+    soundBtn:SetLabel("|cff64748b○|r Звук: ВЫКЛ")
     soundBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.58, 0.65, 0.75 })
   end
 end
@@ -502,7 +498,7 @@ local function ApplyPreviewItemID(itemID)
   iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
   targetNameText:SetText(nm)
   targetNameText:SetTextColor(r, g, b)
-  targetSubText:SetText(string.format("|cff64748bID %d  |  Укажите цену и нажмите Применить|r", id))
+  targetSubText:SetText(string.format("|cff64748bID %d  ·  Укажите цену и нажмите Применить|r", id))
   goldInput:SetFocus()
   return true
 end
@@ -539,7 +535,7 @@ local wlHeader = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 wlHeader:SetPoint("TOPLEFT", cfgCard, "BOTTOMLEFT", 2, -12)
 wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
 
-local rotateBtn = CreateFlatButton(nil, f, 128, 20, DOT_GRAY .. " По кругу: ВЫКЛ")
+local rotateBtn = CreateFlatButton(nil, f, 128, 20, "○ По кругу: ВЫКЛ")
 rotateBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -9)
 
 local presetsBtn = CreateFlatButton(nil, f, 84, 20, "Пресеты")
@@ -548,10 +544,10 @@ presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0
 
 local function RefreshRotateBtn()
   if ForeverSniperDB.rotateScan then
-    rotateBtn:SetLabel(DOT_GREEN .. " По кругу: ВКЛ")
+    rotateBtn:SetLabel("|cff10b981●|r По кругу: ВКЛ")
     rotateBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
   else
-    rotateBtn:SetLabel(DOT_GRAY .. " По кругу: ВЫКЛ")
+    rotateBtn:SetLabel("|cff64748b○|r По кругу: ВЫКЛ")
     rotateBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
   end
 end
@@ -690,7 +686,7 @@ sessionOutcomeText:SetPoint("LEFT", 10, 0)
 sessionOutcomeText:SetJustifyH("LEFT")
 sessionOutcomeText:SetText("|cff64748bПокупок за сессию ещё не было|r")
 
-local clearHistBarBtn = CreateFlatButton(nil, sessionBar, 18, 18, "x")
+local clearHistBarBtn = CreateFlatButton(nil, sessionBar, 18, 18, "×")
 clearHistBarBtn:SetPoint("RIGHT", -4, 0)
 clearHistBarBtn:SetColors({ 0.11, 0.14, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.20, 0.26, 0.36, 1 }, { 0.75, 0.80, 0.88 })
 
@@ -1011,7 +1007,7 @@ local function RefreshSessionBar()
     sessionOutcomeText:SetText("|cff64748bПокупок за сессию ещё не было|r")
   end
   if sb.totalQty > 0 then
-    sessionTotalsText:SetText(string.format("|cff94a3b8Сессия:|r |cffffffff%d шт|r | %s", sb.totalQty, FormatCoins(sb.totalCopper)))
+    sessionTotalsText:SetText(string.format("|cff94a3b8Сессия:|r |cffffffff%d шт|r · %s", sb.totalQty, FormatCoins(sb.totalCopper)))
   else
     sessionTotalsText:SetText("")
   end
@@ -1030,7 +1026,7 @@ local function RecordCompletedPurchase(att)
   sb.totalCopper = sb.totalCopper + total
   table.insert(sb.history, att)
   if #sb.history > 100 then table.remove(sb.history, 1) end
-  sb.lastOutcome = string.format(DOT_GREEN .. " |cff10b981Куплено:|r x%d по %s/шт (%s)", qty, FormatCoinsPlain(unitAvg), FormatCoinsPlain(total))
+  sb.lastOutcome = string.format("|cff10b981● Куплено:|r x%d по %s/шт (%s)", qty, FormatCoinsPlain(unitAvg), FormatCoinsPlain(total))
   RefreshSessionBar()
 
   -- Decrement remaining buy quantity quota (e.g. 100 - 10 = 90)
@@ -1051,7 +1047,7 @@ local function RecordCompletedPurchase(att)
       end
       ForeverSniperDB.autoScan = false
       UpdateStatus()
-      dealBadge:SetText(DOT_GREEN .. " |cff10b981ЛИМИТ ВЫКУПЛЕН - СКАН НА ПАУЗЕ|r")
+      dealBadge:SetText("|cff10b981● ЛИМИТ ВЫКУПЛЕН — СКАН НА ПАУЗЕ|r")
       print(string.format("|cff10b981Goblin Broker:|r лимит по %s выкуплен (скан поставлен на паузу).", att.name or ("Item #" .. tostring(att.itemID))))
     end
   end
@@ -1154,13 +1150,13 @@ local function RefreshBuyButtonText()
 
   if deal.stage == "confirm" then
     local rem = math.max(0, math.ceil(10 - (GetTime() - (deal.confirmAt or GetTime()))))
-    buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ x%d (%dс) | %s%s", chosenQty, rem, FormatCoinsPlain(totalCost), hk))
+    buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ x%d (%dс) · %s%s", chosenQty, rem, FormatCoinsPlain(totalCost), hk))
     buyBtn:SetColors({ 0.68, 0.40, 0.03, 1 }, { 0.85, 0.50, 0.04, 1 }, { 0.96, 0.62, 0.04, 1 }, { 1, 1, 1 })
     dealStripe:SetColorTexture(0.96, 0.62, 0.04, 1)
     dealCard:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.8)
     dealBadge:SetText("|cfff59e0bПОДТВЕРЖДЕНИЕ (ПКМ — отмена)|r")
   else
-    buyBtn:SetLabel(string.format("КУПИТЬ x%d  |  %s%s", chosenQty, FormatCoinsPlain(totalCost), hk))
+    buyBtn:SetLabel(string.format("КУПИТЬ x%d  ·  %s%s", chosenQty, FormatCoinsPlain(totalCost), hk))
     buyBtn:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.95 }, { 1, 1, 1 })
     dealStripe:SetColorTexture(0.06, 0.73, 0.51, 1)
     dealCard:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.75)
@@ -1250,7 +1246,7 @@ local function RenderWatchlist()
     row.name:SetText(nm)
     row.name:SetTextColor(r, g, b)
     row.price:SetText(FormatCoins(lim))
-    row.cap:SetText(cap > 0 and ("|cfff59e0b<= " .. cap .. " шт|r") or "|cff64748bвсе шт|r")
+    row.cap:SetText(cap > 0 and ("|cfff59e0b≤" .. cap .. " шт|r") or "|cff64748bвсе шт|r")
 
     if isSel then
       row:SetBackdropColor(0.11, 0.16, 0.26, 1)
@@ -1300,19 +1296,19 @@ UpdateStatus = function()
   RebuildQueue()
 
   if not state.ahOpen then
-    statusText:SetText(DOT_AMBER .. " |cfff59e0bНет окна АХ|r")
+    statusText:SetText("|cfff59e0b● Нет окна АХ|r")
     statusPill:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.55)
   elseif state.throttled then
-    statusText:SetText(DOT_AMBER .. " |cfff59e0bПауза АХ...|r")
+    statusText:SetText("|cfff59e0b● Пауза АХ...|r")
     statusPill:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.7)
   elseif state.pendingDeal and ForeverSniperDB.autoScan then
-    statusText:SetText(DOT_GREEN .. " |cff10b981Лот найден|r")
+    statusText:SetText("|cff10b981● Лот найден|r")
     statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.85)
   elseif ForeverSniperDB.autoScan then
-    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+    statusText:SetText(string.format("|cff10b981● Скан · %d|r", state.queryCount))
     statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   else
-    statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
+    statusText:SetText("|cff94a3b8● Пауза|r")
     statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
   end
 
@@ -1332,8 +1328,8 @@ UpdateStatus = function()
     targetNameText:SetText(nm)
     targetNameText:SetTextColor(r, g, b)
     local cap = GetQtyCap(sel)
-    local capText = cap > 0 and string.format("  |  |cff94a3b8Макс. покупка:|r |cfff59e0b%d шт|r", cap) or ""
-    targetSubText:SetText(string.format("|cff64748bID %d  |  Лимит:|r %s%s", sel, FormatCoins(ForeverSniperDB.watchlist[sel]), capText))
+    local capText = cap > 0 and string.format("  ·  |cff94a3b8Макс. покупка:|r |cfff59e0b%d шт|r", cap) or ""
+    targetSubText:SetText(string.format("|cff64748bID %d  ·  Лимит:|r %s%s", sel, FormatCoins(ForeverSniperDB.watchlist[sel]), capText))
     queueCounter:SetText(string.format("|cffcbd5e1%d / %d|r", state.idx, #state.queue))
   else
     itemIcon:SetTexture(134400)
@@ -1396,9 +1392,9 @@ local function SetPendingDeal(deal)
   local hex = string.format("%02x%02x%02x", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
   dealTitle:SetText(string.format("|cff%s%s|r", hex, itemName))
   if cap > 0 and (deal.qty or 1) > cap then
-    dealQtyRight:SetText(string.format("|cff10b981x %d|r |cff94a3b8/ %d шт.|r", cap, deal.qty or 1))
+    dealQtyRight:SetText(string.format("|cff10b981× %d|r |cff94a3b8/ %d шт.|r", cap, deal.qty or 1))
   else
-    dealQtyRight:SetText(string.format("|cff10b981x %d шт.|r", deal.qty or 1))
+    dealQtyRight:SetText(string.format("|cff10b981× %d шт.|r", deal.qty or 1))
   end
   skipBtn:SetFlatEnabled(true)
   RefreshBuyButtonText()
@@ -1474,7 +1470,7 @@ local function ExecuteBuyAction(mouseButton)
   if deal.stage == "confirm" then
     -- Protect ultra-fast wheel ticks (<150ms) until AH system ready / quote arrives
     if not deal.quoteReady and (GetTime() - (deal.confirmAt or 0)) < 0.15 then
-      dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
+      dealBadge:SetText("|cfff59e0b● ЖДЁМ ОТВЕТ СЕРВЕРА...|r")
       return
     end
     local _, nm = GetItemVisuals(deal.itemID)
@@ -1603,7 +1599,7 @@ local function SendTargetQuery()
   if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
     if not state.throttled then
       state.throttled = true
-      statusText:SetText(DOT_AMBER .. " |cfff59e0bПауза АХ...|r")
+      statusText:SetText("|cfff59e0b● Пауза АХ...|r")
       statusPill:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.7)
     end
     return
@@ -1619,7 +1615,7 @@ local function SendTargetQuery()
   if rotated then
     UpdateStatus()
   else
-    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+    statusText:SetText(string.format("|cff10b981● Скан · %d|r", state.queryCount))
     statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   end
 end
@@ -2125,9 +2121,9 @@ f:SetScript("OnEvent", function(_, event, arg1)
     if state.pendingDeal then
       if state.pendingDeal.stage == "confirm" then
         state.pendingDeal.quoteReady = true
-        dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+        dealBadge:SetText("|cff10b981● БРОНЬ ГОТОВА — ЖМИТЕ ПОДТВЕРДИТЬ!|r")
       elseif state.pendingDeal.stage == "ready" then
-        dealBadge:SetText(DOT_GREEN .. " |cff10b981ГОТОВО - ЖМИТЕ КУПИТЬ|r")
+        dealBadge:SetText("|cff10b981● ГОТОВО — ЖМИТЕ КУПИТЬ|r")
       end
     end
     if GetTime() >= (state.pauseScanUntil or 0) then
@@ -2151,11 +2147,11 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "COMMODITY_PRICE_UPDATED" then
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
       state.pendingDeal.quoteReady = true
-      dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+      dealBadge:SetText("|cff10b981● БРОНЬ ГОТОВА — ЖМИТЕ ПОДТВЕРДИТЬ!|r")
     end
   elseif event == "COMMODITY_PRICE_UNAVAILABLE" then
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
-      state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот уже раскупили - перескан...|r"
+      state.sessionBuys.lastOutcome = "|cfff43f5e● Лот уже раскупили — перескан...|r"
       RefreshSessionBar()
       ClearPendingDeal()
       state.lastQueryAt = 0
@@ -2169,7 +2165,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "COMMODITY_PURCHASE_FAILED" then
     if state.lastPurchaseAttempt then
       state.lastPurchaseAttempt = nil
-      state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот перехвачен - перескан...|r"
+      state.sessionBuys.lastOutcome = "|cfff43f5e● Лот перехвачен — перескан...|r"
       RefreshSessionBar()
     end
     state.lastQueryAt = 0
@@ -2233,7 +2229,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
         dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
         dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r")
+        dealBadge:SetText("|cfff59e0b● ЦЕНА ВЫШЕ ЛИМИТА|r")
         dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
         dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
         dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))
@@ -2284,7 +2280,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
         dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
         dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r")
+        dealBadge:SetText("|cfff59e0b● ЦЕНА ВЫШЕ ЛИМИТА|r")
         dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
         dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
         dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))
