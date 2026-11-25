@@ -747,11 +747,11 @@ local maxQtyBtn = CreateFlatButton(nil, execRow, 46, 34, "МАКС")
 maxQtyBtn:SetPoint("LEFT", qtyInput, "RIGHT", 4, 0)
 maxQtyBtn:SetColors({ 0.10, 0.14, 0.22, 1 }, { 0.15, 0.21, 0.32, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.92, 0.70, 0.03 })
 
-local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", execRow, 318, 36, "Нет активного лота")
+local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", execRow, 358, 36, "Нет активного лота")
 buyBtn:SetPoint("RIGHT", 0, 0)
 buyBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 buyBtn.label:SetFontObject("GameFontNormal")
-buyBtn.label:SetWidth(306)
+buyBtn.label:SetWidth(346)
 buyBtn.label:SetWordWrap(false)
 buyBtn:SetColors({ 0.11, 0.15, 0.22, 1 }, { 0.11, 0.15, 0.22, 1 }, { 0.20, 0.27, 0.38, 1 }, { 0.72, 0.78, 0.88 })
 buyBtn:SetFlatEnabled(false)
@@ -1198,13 +1198,13 @@ end)
 -- ============================================================================
 -- Footer Action Bar
 -- ============================================================================
-local scanBtn = CreateFlatButton("ForeverSniperScanBtn", f, 160, 28, "Старт скан")
+local scanBtn = CreateFlatButton("ForeverSniperScanBtn", f, 173, 28, "Старт скан")
 scanBtn:SetPoint("BOTTOMLEFT", 16, 14)
 
-local importBtn = CreateFlatButton(nil, f, 160, 28, "Импорт из дашборда")
+local importBtn = CreateFlatButton(nil, f, 174, 28, "Импорт из дашборда")
 importBtn:SetPoint("LEFT", scanBtn, "RIGHT", 6, 0)
 
-local skipBtn = CreateFlatButton(nil, f, 160, 28, "Сброс лота")
+local skipBtn = CreateFlatButton(nil, f, 173, 28, "Сброс лота")
 skipBtn:SetPoint("LEFT", importBtn, "RIGHT", 6, 0)
 skipBtn:SetFlatEnabled(false)
 
@@ -1240,7 +1240,7 @@ local function ApplyMiniMode()
     dealCard:ClearAllPoints()
     dealCard:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -62)
     dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -16, -62)
-    f:SetHeight(248)
+    f:SetHeight(274)
     miniBtn:SetLabel("Полн.")
     miniBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.75 }, { 0.85, 1, 0.94 })
   else
