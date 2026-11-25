@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
-<meta name="app-build" content="1.3.1.13|2026-11-25T07:25:37.989082+00:00" />
+<meta name="app-build" content="1.3.2.14|2026-11-25T07:25:37.989082+00:00" />
 <title>Forever Observatory — WoW: Forever EU Орда</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2300B4D8'/%3E%3Cstop offset='100%25' stop-color='%232AB86F'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='%230B0F17'/%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='url(%23g)' opacity='0.18' stroke='url(%23g)' stroke-width='2'/%3E%3Cpath d='M7 21l6-6 4 4 8-9' fill='none' stroke='%2300B4D8' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='25' cy='10' r='2.5' fill='%232AB86F'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -131,8 +131,17 @@
   .insp-kv { background: var(--rail); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
   .insp-k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .insp-v { font-family: "Fira Code", monospace; font-size: 14px; font-weight: 600; margin-top: 3px; }
-  .prof-tabs { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; margin-bottom: 10px; }
+  .prof-tabs-wrap { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .prof-tabs { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; flex: 1; min-width: 0; padding: 2px 0; }
   .prof-tabs::-webkit-scrollbar { display: none; }
+  .tabs-arrow {
+    flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--card); color: var(--text); border: 1px solid var(--border-strong);
+    display: grid; place-items: center; cursor: pointer; font-size: 14px; line-height: 1;
+    transition: all .14s ease;
+  }
+  .tabs-arrow:hover { border-color: var(--accent); color: var(--accent); background: var(--card-alt); }
+  .tabs-arrow.hidden { display: none; }
   .prof-tab {
     background: var(--card); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; flex-shrink: 0;
     border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 500;
@@ -211,7 +220,7 @@
       <div class="brand-mark">FA</div>
       <div>
         <div class="brand-title">Forever Observatory</div>
-        <div class="brand-sub">EU Орда · House 113 · v1.3.1.13</div>
+        <div class="brand-sub">EU Орда · House 113 · v1.3.2.14</div>
       </div>
     </div>
 
@@ -314,7 +323,11 @@
           <h2 class="section-title">Обозреватель рынка и крафта</h2>
           <span id="countInfo" class="meta"></span>
         </div>
-        <div class="prof-tabs" id="profTabs"><button class="prof-tab active" data-view="overview">Обзор</button><button class="prof-tab" data-view="signals">Сигналы</button><button class="prof-tab" data-view="Алхимия">Алхимия <span class="tab-cnt">186</span></button><button class="prof-tab" data-view="Портняжное дело">Портняжное дело <span class="tab-cnt">475</span></button><button class="prof-tab" data-view="Кузнечное дело">Кузнечное дело <span class="tab-cnt">506</span></button><button class="prof-tab" data-view="Кожевничество">Кожевничество <span class="tab-cnt">589</span></button><button class="prof-tab" data-view="Инженерное дело">Инженерное дело <span class="tab-cnt">270</span></button><button class="prof-tab" data-view="Наложение чар">Наложение чар <span class="tab-cnt">81</span></button><button class="prof-tab" data-view="Кулинария">Кулинария <span class="tab-cnt">132</span></button><button class="prof-tab" data-view="Первая помощь">Первая помощь <span class="tab-cnt">38</span></button><button class="prof-tab" data-view="Горное дело">Горное дело <span class="tab-cnt">17</span></button><button class="prof-tab" data-view="Травничество">Травничество <span class="tab-cnt">3</span></button><button class="prof-tab" data-view="Рыбная ловля">Рыбная ловля <span class="tab-cnt">3</span></button><button class="prof-tab" data-view="Снятие шкур">Снятие шкур <span class="tab-cnt">3</span></button><button class="prof-tab" data-view="ALL">Весь рынок <span class="tab-cnt">8004</span></button></div>
+        <div class="prof-tabs-wrap">
+          <button class="tabs-arrow hidden" id="tabsPrevBtn" title="Листать влево">‹</button>
+          <div class="prof-tabs" id="profTabs"><button class="prof-tab active" data-view="overview">Обзор</button><button class="prof-tab" data-view="signals">Сигналы</button><button class="prof-tab" data-view="Алхимия">Алхимия <span class="tab-cnt">186</span></button><button class="prof-tab" data-view="Портняжное дело">Портняжное дело <span class="tab-cnt">475</span></button><button class="prof-tab" data-view="Кузнечное дело">Кузнечное дело <span class="tab-cnt">506</span></button><button class="prof-tab" data-view="Кожевничество">Кожевничество <span class="tab-cnt">589</span></button><button class="prof-tab" data-view="Инженерное дело">Инженерное дело <span class="tab-cnt">270</span></button><button class="prof-tab" data-view="Наложение чар">Наложение чар <span class="tab-cnt">81</span></button><button class="prof-tab" data-view="Кулинария">Кулинария <span class="tab-cnt">132</span></button><button class="prof-tab" data-view="Первая помощь">Первая помощь <span class="tab-cnt">38</span></button><button class="prof-tab" data-view="Горное дело">Горное дело <span class="tab-cnt">17</span></button><button class="prof-tab" data-view="Травничество">Травничество <span class="tab-cnt">3</span></button><button class="prof-tab" data-view="Рыбная ловля">Рыбная ловля <span class="tab-cnt">3</span></button><button class="prof-tab" data-view="Снятие шкур">Снятие шкур <span class="tab-cnt">3</span></button><button class="prof-tab" data-view="ALL">Весь рынок <span class="tab-cnt">8004</span></button></div>
+          <button class="tabs-arrow" id="tabsNextBtn" title="Листать вправо">›</button>
+        </div>
         <div class="controls" style="margin-bottom:12px;">
           <button class="btn" id="onlyFavsBtn">★ Избранное (<span id="favCount">0</span>)</button>
           <button class="btn" id="onlyCraftableBtn">Только крафтовые</button>
@@ -591,7 +604,7 @@ function drawDynamicsChart(item) {
   const tickIndices = [];
   for (let i = 0; i < pts.length; i += tickStep) tickIndices.push(i);
   if (tickIndices[tickIndices.length - 1] !== pts.length - 1) {
-    if (pts.length - 1 - tickIndices[tickIndices.length - 1] < tickStep * 0.45 && tickIndices.length > 1) {
+    if (pts.length - 1 - tickIndices[tickIndices.length - 1] < tickStep * 0.75 && tickIndices.length > 1) {
       tickIndices[tickIndices.length - 1] = pts.length - 1;
     } else {
       tickIndices.push(pts.length - 1);
@@ -829,6 +842,27 @@ document.querySelectorAll(".nav-btn[data-view]").forEach(btn => {
 document.querySelectorAll(".prof-tab[data-view]").forEach(tab => {
   tab.addEventListener("click", () => setActiveView(tab.dataset.view, tab.textContent.replace(/\d+$/, "").trim()));
 });
+(() => {
+  const tabsEl = document.getElementById("profTabs");
+  const prevBtn = document.getElementById("tabsPrevBtn");
+  const nextBtn = document.getElementById("tabsNextBtn");
+  if (!tabsEl || !prevBtn || !nextBtn) return;
+  const syncArrows = () => {
+    prevBtn.classList.toggle("hidden", tabsEl.scrollLeft <= 4);
+    nextBtn.classList.toggle("hidden", tabsEl.scrollLeft + tabsEl.clientWidth >= tabsEl.scrollWidth - 4);
+  };
+  prevBtn.addEventListener("click", () => tabsEl.scrollBy({ left: -240, behavior: "smooth" }));
+  nextBtn.addEventListener("click", () => tabsEl.scrollBy({ left: 240, behavior: "smooth" }));
+  tabsEl.addEventListener("scroll", syncArrows, { passive: true });
+  tabsEl.addEventListener("wheel", e => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      tabsEl.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+  window.addEventListener("resize", syncArrows);
+  setTimeout(syncArrows, 50);
+})();
 document.getElementById("onlyFavsBtn").addEventListener("click", e => {
   onlyFavs = !onlyFavs;
   e.currentTarget.classList.toggle("active", onlyFavs);
