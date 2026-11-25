@@ -1189,6 +1189,10 @@ def render_dashboard_html(data: dict) -> str:
         </table>
         </div>
       </section>
+
+      <footer style="margin-top:8px; padding-top:14px; border-top:1px solid var(--border); color:var(--muted); font-size:11.5px; line-height:1.5;">
+        Неофициальный некоммерческий фан-проект на базе официального Blizzard Game Data API. World of Warcraft and Blizzard Entertainment are trademarks or registered trademarks of Blizzard Entertainment, Inc. in the U.S. and/or other countries.
+      </footer>
     </main>
   </div>
 </div>
