@@ -1,0 +1,11 @@
+<Bindings>
+  <Binding name="CLICK ForeverSniperBuyBtn:LeftButton" header="FOREVERSNIPER" category="Goblin Broker: Forever">
+    Купить / Подтвердить лот
+  </Binding>
+  <Binding name="CLICK ForeverSniperScanBtn:LeftButton" category="Goblin Broker: Forever">
+    Старт / Пауза скана
+  </Binding>
+  <Binding name="CLICK ForeverSniperMinimapBtn:LeftButton" category="Goblin Broker: Forever">
+    Показать / Скрыть окно
+  </Binding>
+</Bindings>

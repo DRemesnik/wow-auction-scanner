@@ -24,3 +24,7 @@ description: Rules and verified workflows for the WoW: Forever EU Horde Auction 
 - On this Windows machine, `.venv\Scripts\python.exe` is blocked by Application Control policy (`os error 4551`). Run Python using:
   `C:\Users\remes\AppData\Roaming\uv\python\cpython-3.11.17-windows-x86_64-none\python.exe` with `$env:PYTHONPATH="src"`.
 - In Windows PowerShell 5.1, do not use `&&` or escaped quotes inside `python -c "..."`; use `@' ... '@ | & $PY -` for inline scripts and `; if ($LASTEXITCODE -eq 0) { ... }` for chaining.
+
+## 4. Versioning & Release Discipline
+- Format: `major.minor.bugfixes.build` in `src/tracker/__init__.py`, `pyproject.toml`, and `CHANGELOG.md`.
+- **Only bump the version when merging/pushing a release to `master`** — never bump versions on intermediate local edits or iterations.

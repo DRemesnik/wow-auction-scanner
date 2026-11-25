@@ -1,0 +1,8 @@
+## Interface: 16001, 11508, 11509
+## Title: Goblin Broker: Forever Sniper
+## Notes: Legal 1-click AH sniper synced from Goblin Broker: Forever
+## Author: Goblin Broker: Forever
+## Version: 2.0.0.16
+## SavedVariables: ForeverSniperDB
+
+ForeverSniper.lua

@@ -847,8 +847,8 @@ def render_dashboard_html(data: dict) -> str:
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
 <meta name="app-build" content="{html.escape(__version__)}|{html.escape(str(snap_time))}" />
-<title>Forever Observatory — WoW: Forever EU Орда</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2300B4D8'/%3E%3Cstop offset='100%25' stop-color='%232AB86F'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='%230B0F17'/%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='url(%23g)' opacity='0.18' stroke='url(%23g)' stroke-width='2'/%3E%3Cpath d='M7 21l6-6 4 4 8-9' fill='none' stroke='%2300B4D8' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='25' cy='10' r='2.5' fill='%232AB86F'/%3E%3C/svg%3E" />
+<title>Goblin Broker: Forever — WoW: Forever EU Орда</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g1' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23FEF08A'/%3E%3Cstop offset='55%25' stop-color='%23EAB308'/%3E%3Cstop offset='100%25' stop-color='%23B45309'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='%230B0F17'/%3E%3Cpath d='M2 7 L11 11 L10 16 Z M30 7 L21 11 L22 16 Z' fill='url(%23g1)'/%3E%3Cpath d='M9.5 10 L22.5 10 L20.5 22.5 L16 28.5 L11.5 22.5 Z' fill='url(%23g1)'/%3E%3Cpath d='M11.5 14.5 L15 16 L12 17 Z' fill='%230B0F17'/%3E%3Cpath d='M15 21.5 L16 17 L17 21.5 Z' fill='%230B0F17'/%3E%3Ccircle cx='20' cy='15.5' r='4.2' fill='%23064E3B' stroke='%23FEF08A' stroke-width='1.6'/%3E%3Ccircle cx='20' cy='15.5' r='2.2' fill='%2334D399'/%3E%3Cpath d='M23 19 L23 25' stroke='%2334D399' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -889,9 +889,10 @@ def render_dashboard_html(data: dict) -> str:
   }}
   .brand {{ display: flex; align-items: center; gap: 10px; padding: 4px 6px; }}
   .brand-mark {{
-    width: 32px; height: 32px; border-radius: 8px;
-    background: linear-gradient(135deg, #00B4D8, #2AB86F);
-    display: grid; place-items: center; color: #051018; font-weight: 800; font-size: 14px;
+    width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
+    background: #0B0F17; border: 1.5px solid rgba(250, 204, 21, 0.55);
+    display: grid; place-items: center;
+    box-shadow: 0 2px 10px rgba(250, 204, 21, 0.14);
   }}
   .brand-title {{ font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }}
   .brand-sub {{ font-size: 11px; color: var(--muted); }}
@@ -1057,9 +1058,20 @@ def render_dashboard_html(data: dict) -> str:
 <div class="shell">
   <aside class="rail">
     <div class="brand">
-      <div class="brand-mark">FA</div>
+      <div class="brand-mark" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+          <defs><linearGradient id="gbHead" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FEF08A"/><stop offset="55%" stop-color="#EAB308"/><stop offset="100%" stop-color="#B45309"/></linearGradient></defs>
+          <path d="M2 7 L11 11 L10 16 Z M30 7 L21 11 L22 16 Z" fill="url(#gbHead)"/>
+          <path d="M9.5 10 L22.5 10 L20.5 22.5 L16 28.5 L11.5 22.5 Z" fill="url(#gbHead)"/>
+          <path d="M11.5 14.5 L15 16 L12 17 Z" fill="#0B0F17"/>
+          <path d="M15 21.5 L16 17 L17 21.5 Z" fill="#0B0F17"/>
+          <circle cx="20" cy="15.5" r="4.2" fill="#064E3B" stroke="#FEF08A" stroke-width="1.6"/>
+          <circle cx="20" cy="15.5" r="2.2" fill="#34D399"/>
+          <path d="M23 19 L23 25" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
       <div>
-        <div class="brand-title">Forever Observatory</div>
+        <div class="brand-title">Goblin Broker: Forever</div>
         <div class="brand-sub">EU Орда · House {html.escape(str(house_id))} · v{html.escape(__version__)}</div>
       </div>
     </div>
@@ -1174,6 +1186,7 @@ def render_dashboard_html(data: dict) -> str:
           <button class="btn" id="onlySignalsBtn">Только сигналы</button>
           <button class="btn" id="onlyProfitBtn">Только выгодные</button>
           <button class="btn" id="toggleReagentsBtn">Показать реагенты</button>
+          <button class="btn" id="exportAddonBtn" title="Скопировать лимиты цен для аддона ForeverSniper">Экспорт в аддон</button>
         </div>
         <div class="table-wrap hide-reagents" id="itemsTableWrap">
         <table>
@@ -1714,6 +1727,21 @@ document.getElementById("toggleReagentsBtn").addEventListener("click", e => {{
   e.currentTarget.classList.toggle("active", showReagents);
   e.currentTarget.textContent = showReagents ? "Скрыть реагенты" : "Показать реагенты";
   document.getElementById("itemsTableWrap").classList.toggle("hide-reagents", !showReagents);
+}});
+document.getElementById("exportAddonBtn").addEventListener("click", () => {{
+  const source = FAVORITES.size > 0
+    ? ITEMS.filter(it => FAVORITES.has(it.item_id) && it.current_min > 0)
+    : ITEMS.filter(it => ["СКУПКА", "КРАФТИТЬ"].includes(it.signal) && it.current_min > 0).slice(0, 40);
+  const pairs = source.map(it => {{
+    const cap = it.signal === "СКУПКА" && it.p25 > 0 ? Math.floor(it.p25 * 0.78) : it.current_min;
+    return `${{it.item_id}}=${{Math.max(1, cap)}}`;
+  }});
+  const payload = `# GoblinBroker:Forever\n` + pairs.join(";");
+  navigator.clipboard?.writeText(payload);
+  const t = document.getElementById("toast");
+  t.textContent = `Скопировано ${{pairs.length}} позиций для Goblin Broker!`;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
 }});
 
 document.getElementById("loadMoreBtn").addEventListener("click", () => {{ renderLimit += 200; document.querySelectorAll(".quick-pill[data-id], .dt-bar-row[data-id]").forEach(el => {{
