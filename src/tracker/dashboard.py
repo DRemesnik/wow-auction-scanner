@@ -815,11 +815,11 @@ def render_dashboard_html(data: dict) -> str:
         for it in rows:
             val = max(0, it.craft_profit_copper or 0)
             pct = max(6, int((val / max_p) * 100))
-            val_txt = html.escape(format_copper(val))
+            val_html = _format_copper_html(val)
             name_txt = html.escape(it.name_ru[:28] + ("…" if len(it.name_ru) > 28 else ""))
             out.append(
                 f"<div class='dt-bar-row' data-id='{it.item_id}' style='cursor:pointer;'>"
-                f"<span class='dt-bar-val mono'>{val_txt}</span>"
+                f"<span class='dt-bar-val mono'>{val_html}</span>"
                 f"<div class='dt-bar-track'><div class='dt-bar-fill' style='width:{pct}%; background:{pill_bg};'>{name_txt}</div></div>"
                 f"</div>"
             )
@@ -827,15 +827,15 @@ def render_dashboard_html(data: dict) -> str:
 
     alch_all = [it for it in data["items"] if (it.profession_ru == "Алхимия" or it.group_label == "Алхимия") and it.is_craftable]
     tailor_all = [it for it in data["items"] if (it.profession_ru == "Портняжное дело" or it.group_label == "Портняжное дело") and it.is_craftable]
-    alch_top = _top_signals_for_prof("Алхимия", 7)
-    tailor_top = _top_signals_for_prof("Портняжное дело", 7)
+    alch_top = _top_signals_for_prof("Алхимия", 5)
+    tailor_top = _top_signals_for_prof("Портняжное дело", 5)
     illiquid_count = sum(1 for it in data["items"] if it.trade_signal == "НЕЛИКВИД")
     best_liquid = max(
         (it for it in data["items"] if it.trade_signal in {"КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"} and (it.craft_profit_copper or 0) > 0),
         key=lambda x: x.craft_profit_copper or 0,
         default=None,
     )
-    best_liquid_txt = f"+{format_copper(best_liquid.craft_profit_copper)}" if best_liquid else "—"
+    best_liquid_html = f"+{_format_copper_html(best_liquid.craft_profit_copper)}" if best_liquid else "—"
     best_liquid_sub = html.escape(best_liquid.name_ru) if best_liquid else "—"
 
     return f"""<!DOCTYPE html>
@@ -934,9 +934,9 @@ def render_dashboard_html(data: dict) -> str:
   .live-pill {{ display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--border-strong); padding: 6px 12px; border-radius: 999px; font-size: 12px; color: var(--muted); }}
   .live-dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--pos); box-shadow: 0 0 10px var(--pos); animation: pulse 2.2s infinite; }}
   @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: .45; }} }}
-  .content {{ padding: 20px 24px 36px; display: flex; flex-direction: column; gap: 20px; max-width: 1680px; width: 100%; margin: 0 auto; }}
+  .content {{ padding: 16px 24px 36px; display: flex; flex-direction: column; gap: 16px; max-width: 2100px; width: 100%; margin: 0 auto; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr)); gap: 12px; }}
-  .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); }}
+  .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 13px 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); }}
   .dt-bento {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }}
   .dt-hex-big {{ font-family: "Fira Code", monospace; font-size: 24px; font-weight: 700; color: var(--text); }}
   .seg-bar {{ display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #1E293B; gap: 2px; margin-bottom: 10px; }}
@@ -944,8 +944,8 @@ def render_dashboard_html(data: dict) -> str:
   .seg-legend i {{ display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }}
   .quick-pill {{ display: inline-flex; align-items: center; gap: 6px; background: var(--rail); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; color: var(--text); font-size: 11.5px; cursor: pointer; font-family: inherit; transition: border-color .14s ease; }}
   .quick-pill:hover {{ border-color: var(--accent); background: var(--card-alt); }}
-  .dt-bar-row {{ display: grid; grid-template-columns: 82px 1fr; gap: 8px; align-items: center; margin-bottom: 5px; font-size: 11.5px; }}
-  .dt-bar-val {{ text-align: right; color: var(--text); font-weight: 600; }}
+  .dt-bar-row {{ display: grid; grid-template-columns: 116px 1fr; gap: 8px; align-items: center; margin-bottom: 5px; font-size: 11.5px; }}
+  .dt-bar-val {{ text-align: right; color: var(--text); font-weight: 600; display: flex; justify-content: flex-end; }}
   .dt-bar-track {{ background: #0E131D; border-radius: 4px; overflow: hidden; }}
   .dt-bar-fill {{ padding: 3px 8px; color: #FFFFFF; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 4px; }}
   .card-label {{ color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }}
@@ -964,17 +964,18 @@ def render_dashboard_html(data: dict) -> str:
   .sig-snipe {{ background: rgba(0, 180, 216, 0.14); color: #00B4D8; border: 1px solid rgba(0, 180, 216, 0.38); }}
   .sig-low {{ background: rgba(245, 158, 11, 0.14); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.38); }}
   .sig-bad {{ background: rgba(239, 68, 68, 0.12); color: #EF4444; border: 1px solid rgba(239, 68, 68, 0.32); }}
-  .workspace-split {{ display: grid; grid-template-columns: minmax(0, 1.38fr) minmax(380px, 0.92fr); gap: 16px; align-items: start; }}
+  .workspace-split {{ display: grid; grid-template-columns: minmax(0, 1.72fr) minmax(380px, 460px); gap: 16px; align-items: start; }}
   #inspectorSection {{ position: sticky; top: 68px; }}
   .inspector-grid {{ display: flex; flex-direction: column; gap: 12px; }}
   .insp-metrics {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }}
   .insp-kv {{ background: var(--rail); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }}
   .insp-k {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
   .insp-v {{ font-family: "Fira Code", monospace; font-size: 14px; font-weight: 600; margin-top: 3px; }}
-  .prof-tabs {{ display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }}
+  .prof-tabs {{ display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; margin-bottom: 10px; }}
+  .prof-tabs::-webkit-scrollbar {{ display: none; }}
   .prof-tab {{
-    background: var(--card); color: var(--muted); border: 1px solid var(--border);
-    border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 500;
+    background: var(--card); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; flex-shrink: 0;
+    border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 500;
     cursor: pointer; font-family: inherit; transition: all .14s ease; display: inline-flex; align-items: center; gap: 6px;
   }}
   .prof-tab:hover {{ color: var(--text); border-color: var(--border-strong); }}
@@ -987,7 +988,8 @@ def render_dashboard_html(data: dict) -> str:
   .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: auto; max-height: 760px; }}
   .hide-reagents .col-reagents {{ display: none; }}
   table {{ width: 100%; border-collapse: collapse; }}
-  th, td {{ padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 12.5px; }}
+  th, td {{ padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 12.5px; white-space: nowrap; }}
+  .item-name-txt {{ max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }}
   th {{ position: sticky; top: 0; z-index: 2; color: var(--muted); font-weight: 600; background: #0D111C; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }}
   th.num, td.num {{ text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
   td.num .coin-price {{ justify-content: flex-end; }}
@@ -1108,11 +1110,14 @@ def render_dashboard_html(data: dict) -> str:
         <div class="card"><div class="card-label">Ликвидных сигналов</div><div class="card-val" style="color:var(--accent)">{action_signals}</div><div class="card-sub">КРАФТИТЬ / СКУПКА / ВЫГОДНО</div></div>
         <div class="card"><div class="card-label">Прибыльных крафтов</div><div class="card-val pos">{profitable_crafts}</div><div class="card-sub">После вычета комиссии 5%</div></div>
         <div class="card"><div class="card-label">Фильтр неликвида</div><div class="card-val" style="color:var(--warn)">{illiquid_count}</div><div class="card-sub">Отсеяны редкие/дорогие лоты</div></div>
-        <div class="card"><div class="card-label">Топ ликвидный профит</div><div class="card-val pos">{html.escape(best_liquid_txt)}</div><div class="card-sub">{best_liquid_sub}</div></div>
+        <div class="card"><div class="card-label">Топ ликвидный профит</div><div class="card-val pos">{best_liquid_html}</div><div class="card-sub">{best_liquid_sub}</div></div>
       </section>
 
-      <section id="signalsSection">
-        <div class="section-head"><h2 class="section-title">Торговые сигналы: Алхимия и Портняжное дело</h2><span class="meta">Dynatrace Honeycomb Health & Ranked Profit</span></div>
+      <details id="signalsSection" open>
+        <summary class="section-head" style="cursor:pointer; list-style:none;">
+          <h2 class="section-title">Торговые сигналы: Алхимия и Портняжное дело ▾</h2>
+          <span class="meta">Свернуть / развернуть обзор</span>
+        </summary>
         <div class="dt-bento">
           <div class="card">
             <div class="card-label" style="margin-bottom:8px;">Алхимия — Обзор возможностей</div>
@@ -1133,15 +1138,15 @@ def render_dashboard_html(data: dict) -> str:
         </div>
         <div class="panel-2">
           <div class="card">
-            <div class="card-label" style="margin-bottom:8px;">Алхимия — Приоритетные сигналы ▾</div>
-            {_render_signal_cards(alch_top[:5])}
+            <div class="card-label" style="margin-bottom:8px;">Алхимия — Приоритетные сигналы</div>
+            {_render_signal_cards(alch_top[:3])}
           </div>
           <div class="card">
-            <div class="card-label" style="margin-bottom:8px;">Портняжное дело — Приоритетные сигналы ▾</div>
-            {_render_signal_cards(tailor_top[:5])}
+            <div class="card-label" style="margin-bottom:8px;">Портняжное дело — Приоритетные сигналы</div>
+            {_render_signal_cards(tailor_top[:3])}
           </div>
         </div>
-      </section>
+      </details>
 
       <div class="workspace-split" id="workspaceSplit">
       <section id="explorerSection">
@@ -1242,7 +1247,7 @@ let onlyCraftable = false;
 let onlySignals = false;
 let onlyProfit = false;
 let showReagents = false;
-let sortKey = "craft_profit";
+let sortKey = "score";
 let sortDir = -1;
 let renderLimit = 200;
 const FAV_KEY = "wow_ah_favorites_v1";
@@ -1319,7 +1324,9 @@ function smoothPath(points) {{
 function drawDynamicsChart(item) {{
   const pts = HISTORY[String(item.item_id)] || [];
   document.getElementById("chartTitle").textContent = `${{item.name_ru}} (#${{item.item_id}}) · Снимков: ${{pts.length}}`;
-  document.getElementById("inspName").textContent = item.name_ru;
+  const qCls = item.quality ? `q-${{item.quality}}` : "";
+  const iconHtml = item.icon ? `<img src="${{item.icon}}" style="width:24px;height:24px;border-radius:4px;border:1px solid #475569;vertical-align:middle;" />` : "";
+  document.getElementById("inspName").innerHTML = `<span style="display:inline-flex;align-items:center;gap:8px;">${{iconHtml}}<span class="${{qCls}}">${{item.name_ru}}</span></span>`;
   document.getElementById("inspReason").textContent = `Оценка: ${{item.score}}/100 · ${{item.reason}}`;
   document.getElementById("inspReagents").textContent = `Реагенты: ${{item.reagents}}`;
   document.getElementById("inspMin").innerHTML = fmtCoinsHtml(item.current_min);
@@ -1526,7 +1533,7 @@ function renderTable() {{
     return `
     <tr data-id="${{it.item_id}}" style="cursor:pointer;">
       <td><button class="fav-btn ${{isFav ? 'is-fav' : ''}}" data-fav="${{it.item_id}}" title="В избранное">★</button></td>
-      <td><span class="item-cell" data-tip-id="${{it.item_id}}">${{iconTag}}<span class="${{qCls}}">${{it.name_ru}}</span><button class="copy-btn" data-copy="${{it.name_ru.replace(/"/g, '&quot;')}}" title="Копировать название"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span></td>
+      <td><span class="item-cell" data-tip-id="${{it.item_id}}">${{iconTag}}<span class="item-name-txt ${{qCls}}">${{it.name_ru}}</span><button class="copy-btn" data-copy="${{it.name_ru.replace(/"/g, '&quot;')}}" title="Копировать название"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span></td>
       <td>${{it.is_craftable ? '<span class="pos">' + it.profession + '</span>' : '—'}}</td>
       <td class="mono num"><b style="color:${{it.score >= 65 ? 'var(--pos)' : it.score >= 45 ? 'var(--accent)' : 'var(--muted)'}}">${{it.score}}</b></td>
       <td>${{signalBadge(it.signal)}}</td>

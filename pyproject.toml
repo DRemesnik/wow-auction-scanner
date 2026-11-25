@@ -1,6 +1,6 @@
 [project]
 name = "wow-auction-tracker"
-version = "1.2.0.11"
+version = "1.3.0.12"
 description = "Local auction house tracker and transmute/crafting analytics for World of Warcraft: Forever"
 readme = "README.md"
 requires-python = ">=3.11"
