@@ -124,7 +124,12 @@ local function FormatCoinsPlain(copper)
   return table.concat(parts, " ")
 end
 
+local itemVisualCache = {}
 local function GetItemVisuals(itemID)
+  local cached = itemVisualCache[itemID]
+  if cached then
+    return cached[1], cached[2], cached[3], cached[4], cached[5]
+  end
   local icon = 134400
   if C_Item and C_Item.GetItemIconByID then
     icon = C_Item.GetItemIconByID(itemID) or icon
@@ -133,12 +138,16 @@ local function GetItemVisuals(itemID)
   end
   local info = C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo and C_AuctionHouse.MakeItemKey and
     C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
-  local name = (info and info.itemName) or (GetItemInfo and GetItemInfo(itemID)) or ("Item #" .. tostring(itemID))
+  local realName = (info and info.itemName) or (GetItemInfo and GetItemInfo(itemID))
+  local name = realName or ("Item #" .. tostring(itemID))
   local quality = (info and info.quality) or (select(3, GetItemInfo(itemID))) or 1
   local r, g, b = 0.88, 0.91, 0.96
   if ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
     local qc = ITEM_QUALITY_COLORS[quality]
     r, g, b = qc.r, qc.g, qc.b
+  end
+  if realName and icon ~= 134400 then
+    itemVisualCache[itemID] = { icon, name, r, g, b }
   end
   return icon, name, r, g, b
 end
@@ -1502,7 +1511,7 @@ local function ExecuteBuyAction(mouseButton)
       timeStr = date and date("%H:%M:%S") or "",
     }
     C_AuctionHouse.PlaceBid(deal.auctionID, deal.unitPrice)
-    state.pauseScanUntil = GetTime() + 2.0
+    state.pauseScanUntil = GetTime() + 0.6
     RecordCompletedPurchase(att)
     ClearPendingDeal()
     return
@@ -1514,7 +1523,7 @@ local function ExecuteBuyAction(mouseButton)
       return
     end
     C_AuctionHouse.StartCommoditiesPurchase(deal.itemID, chosenQty)
-    state.pauseScanUntil = GetTime() + 2.0
+    state.pauseScanUntil = GetTime() + 1.5
     deal.maxAvailQty = deal.maxAvailQty or deal.qty
     deal.qty = chosenQty
     deal.stage = "confirm"
@@ -1525,8 +1534,9 @@ local function ExecuteBuyAction(mouseButton)
   end
 
   if deal.stage == "confirm" then
-    -- Protect ultra-fast wheel ticks (<150ms) until AH system ready / quote arrives
-    if not deal.quoteReady and (GetTime() - (deal.confirmAt or 0)) < 0.15 then
+    -- Protect ultra-fast wheel ticks (<150ms) only if AH throttle is not yet ready
+    local ahReady = C_AuctionHouse.IsThrottledMessageSystemReady and C_AuctionHouse.IsThrottledMessageSystemReady()
+    if not deal.quoteReady and not ahReady and (GetTime() - (deal.confirmAt or 0)) < 0.15 then
       dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
       return
     end
@@ -1540,7 +1550,7 @@ local function ExecuteBuyAction(mouseButton)
       timeStr = date and date("%H:%M:%S") or "",
     }
     C_AuctionHouse.ConfirmCommoditiesPurchase(deal.itemID, chosenQty)
-    state.pauseScanUntil = GetTime() + 2.0
+    state.pauseScanUntil = GetTime() + 0.6
     ClearPendingDeal()
   end
 end
@@ -1670,6 +1680,11 @@ local function SendTargetQuery()
   state.throttled = false
   state.lastQueryAt = GetTime()
   state.queryCount = state.queryCount + 1
+  state.cleanQueryStreak = (state.cleanQueryStreak or 0) + 1
+  if state.cleanQueryStreak >= 3 and (state.queryInterval or 0.25) > 0.25 then
+    state.cleanQueryStreak = 0
+    state.queryInterval = math.max(0.25, state.queryInterval - 0.05)
+  end
   if rotated then
     UpdateStatus()
   else
@@ -2255,7 +2270,8 @@ f:SetScript("OnEvent", function(_, event, arg1)
     RefreshOverrideBindings()
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
     state.throttled = true
-    state.queryInterval = math.min(1.0, (state.queryInterval or 0.65) + 0.15)
+    state.cleanQueryStreak = 0
+    state.queryInterval = math.min(1.0, (state.queryInterval or 0.25) + 0.15)
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
       -- Reservation packet was dropped by AH throttle; revert to ready so user can re-send cleanly
       state.pendingDeal.stage = "ready"
@@ -2309,6 +2325,8 @@ f:SetScript("OnEvent", function(_, event, arg1)
       state.lastPurchaseAttempt = nil
       RecordCompletedPurchase(att)
     end
+    state.pauseScanUntil = 0
+    state.lastQueryAt = 0
   elseif event == "COMMODITY_PURCHASE_FAILED" then
     if state.lastPurchaseAttempt then
       state.lastPurchaseAttempt = nil
@@ -2353,7 +2371,6 @@ f:SetScript("OnEvent", function(_, event, arg1)
       availBelow = totalAvail,
       updatedAt = GetTime(),
     }
-    RenderWatchlist()
     if minUnitPrice and totalAvail > 0 then
       local info = C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
       SetPendingDeal({
@@ -2376,8 +2393,10 @@ f:SetScript("OnEvent", function(_, event, arg1)
           return sum
         end,
       })
+      RenderWatchlist()
     else
       ClearPendingDeal(true)
+      RenderWatchlist()
       if lowestSeen then
         local diff = math.max(0, lowestSeen - maxPrice)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
