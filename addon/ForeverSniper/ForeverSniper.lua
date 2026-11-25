@@ -21,9 +21,16 @@ local function IsSoundEnabled()
   return ForeverSniperDB.soundAlert ~= false
 end
 
+local origBgSoundCVar = nil
 local function EnsureBackgroundSoundCVar()
   if IsSoundEnabled() and SetCVar then
+    if origBgSoundCVar == nil and GetCVar then
+      local ok, cur = pcall(GetCVar, "Sound_EnableSoundWhenGameIsInBG")
+      if ok then origBgSoundCVar = cur end
+    end
     pcall(SetCVar, "Sound_EnableSoundWhenGameIsInBG", "1")
+  elseif not IsSoundEnabled() and SetCVar and origBgSoundCVar ~= nil then
+    pcall(SetCVar, "Sound_EnableSoundWhenGameIsInBG", origBgSoundCVar)
   end
 end
 
@@ -2077,6 +2084,7 @@ end)
 -- Events, Minimap Button & AH Hook
 -- ============================================================================
 local function RefreshOverrideBindings()
+  if InCombatLockdown and InCombatLockdown() then return end
   if not ClearOverrideBindings or not SetOverrideBindingClick then return end
   ClearOverrideBindings(f)
   if state.ahOpen and f:IsShown() and GetBindingKey then
@@ -2102,7 +2110,9 @@ f:SetScript("OnMouseWheel", function(_, delta)
 end)
 
 f:HookScript("OnHide", function()
-  if ClearOverrideBindings then ClearOverrideBindings(f) end
+  if ClearOverrideBindings and not (InCombatLockdown and InCombatLockdown()) then
+    ClearOverrideBindings(f)
+  end
 end)
 
 local function ToggleSniperWindow()
