@@ -1842,18 +1842,24 @@ local function RunImport(replaceAll)
   local added = 0
   local nextList = replaceAll and {} or (ForeverSniperDB.watchlist or {})
   local firstID = nil
-  for idStr, priceStr in string.gmatch(text, "(%d+)=(%d+)") do
+  ForeverSniperDB.qtyLimits = ForeverSniperDB.qtyLimits or {}
+  local nextQty = replaceAll and {} or ForeverSniperDB.qtyLimits
+  for idStr, priceStr, qtyStr in string.gmatch(text, "(%d+)=(%d+):?(%d*)") do
     local id = tonumber(idStr)
     local p = tonumber(priceStr)
+    local q = tonumber(qtyStr)
     if id and p and p > 0 then
       nextList[id] = p
+      if q and q > 0 then
+        nextQty[id] = q
+      end
       if not firstID then firstID = id end
       added = added + 1
     end
   end
+  ForeverSniperDB.qtyLimits = nextQty
   ForeverSniperDB.watchlist = nextList
   if replaceAll then
-    ForeverSniperDB.qtyLimits = {}
     ForeverSniperDB.selectedID = firstID
     ForeverSniperDB.activePreset = nil
   elseif not ForeverSniperDB.selectedID then
@@ -1882,7 +1888,7 @@ end)
 -- Saved Presets Modal (Save / Load / Delete Watchlist Presets)
 -- ============================================================================
 local pre = CreateFrame("Frame", "ForeverSniperPresetsFrame", UIParent, "BackdropTemplate")
-pre:SetSize(420, 310)
+pre:SetSize(476, 336)
 pre:SetPoint("CENTER")
 pre:SetBackdrop(FLAT_BACKDROP)
 pre:SetBackdropColor(0.043, 0.067, 0.125, 0.98)
@@ -1936,7 +1942,7 @@ preNewBtn:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.7
 
 local preListBox = CreateFrame("Frame", nil, pre, "BackdropTemplate")
 preListBox:SetPoint("TOPLEFT", 16, -82)
-preListBox:SetPoint("BOTTOMRIGHT", -16, 14)
+preListBox:SetPoint("BOTTOMRIGHT", -16, 44)
 preListBox:SetBackdrop(FLAT_BACKDROP)
 preListBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
 preListBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
@@ -1959,9 +1965,40 @@ if preScrollBar then
 end
 
 local preContent = CreateFrame("Frame", nil, preScroll)
-preContent:SetSize(366, 200)
+preContent:SetSize(422, 200)
 preScroll:SetScrollChild(preContent)
 local preRows = {}
+
+local preStarterBtn = CreateFlatButton(nil, pre, 142, 24, "Стартовые [PRO]")
+preStarterBtn:SetPoint("BOTTOMLEFT", 16, 12)
+preStarterBtn:SetColors({ 0.16, 0.13, 0.04, 1 }, { 0.28, 0.21, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.85 }, { 0.99, 0.88, 0.45 })
+
+local preHint = pre:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+preHint:SetPoint("LEFT", preStarterBtn, "RIGHT", 10, 0)
+preHint:SetText("|cff64748b5 наборов под рынок Forever (без перезаписи своих)|r")
+
+local PRO_STARTER_PRESETS = {
+  ["[PRO] Топ Рейд-Травы"] = {
+    watchlist = { [13468] = 90000, [13466] = 1900, [13463] = 1650, [13464] = 1150, [13465] = 1000, [8845] = 4000 },
+    qtyLimits = { [13468] = 5, [13466] = 100, [13463] = 100, [13464] = 100, [13465] = 100, [8845] = 60 },
+  },
+  ["[PRO] Топ Руда и Арканит"] = {
+    watchlist = { [12360] = 335000, [10620] = 1500, [12359] = 1650, [3858] = 800, [12361] = 28000, [12364] = 8800 },
+    qtyLimits = { [12360] = 10, [10620] = 200, [12359] = 200, [3858] = 200, [12361] = 20, [12364] = 20 },
+  },
+  ["[PRO] Ткань и Луноткань"] = {
+    watchlist = { [14342] = 560000, [14256] = 7500, [14047] = 420, [4338] = 330, [4306] = 160 },
+    qtyLimits = { [14342] = 10, [14256] = 60, [14047] = 500, [4338] = 400, [4306] = 400 },
+  },
+  ["[PRO] Наложение чар"] = {
+    watchlist = { [20725] = 520000, [14344] = 23000, [16204] = 1400, [11176] = 1450, [11137] = 650, [11083] = 390 },
+    qtyLimits = { [20725] = 10, [14344] = 40, [16204] = 200, [11176] = 200, [11137] = 200, [11083] = 200 },
+  },
+  ["[PRO] Рейд-Химия и Настои"] = {
+    watchlist = { [13510] = 165000, [13512] = 215000, [13511] = 155000, [13457] = 14500, [13452] = 7000, [13446] = 2600 },
+    qtyLimits = { [13510] = 5, [13512] = 5, [13511] = 5, [13457] = 40, [13452] = 60, [13446] = 100 },
+  },
+}
 
 local preEmptyText = preListBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 preEmptyText:SetPoint("CENTER")
@@ -2012,18 +2049,22 @@ local function RenderPresetsList()
     local row = preRows[i]
     if not row then
       row = CreateFrame("Frame", nil, preContent, "BackdropTemplate")
-      row:SetSize(362, 28)
+      row:SetSize(418, 28)
       row:SetBackdrop(FLAT_BACKDROP)
       row:SetBackdropColor(0.055, 0.078, 0.135, 1)
       row:SetBackdropBorderColor(0.16, 0.22, 0.34, 0.85)
 
       row.nm = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.nm:SetPoint("LEFT", 8, 0); row.nm:SetWidth(182); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
+      row.nm:SetPoint("LEFT", 8, 0); row.nm:SetWidth(174); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
 
       row.cnt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.cnt:SetPoint("LEFT", row.nm, "RIGHT", 4, 0); row.cnt:SetWidth(54); row.cnt:SetJustifyH("RIGHT")
+      row.cnt:SetPoint("LEFT", row.nm, "RIGHT", 4, 0); row.cnt:SetWidth(48); row.cnt:SetJustifyH("RIGHT")
 
-      row.load = CreateFlatButton(nil, row, 92, 22, "Мониторить")
+      row.exp = CreateFlatButton(nil, row, 60, 22, "Экспорт")
+      row.exp:SetPoint("RIGHT", -122, 0)
+      row.exp:SetColors({ 0.12, 0.16, 0.25, 1 }, { 0.18, 0.24, 0.36, 1 }, { 0.24, 0.32, 0.46, 0.85 }, { 0.78, 0.86, 0.96 })
+
+      row.load = CreateFlatButton(nil, row, 88, 22, "Мониторить")
       row.load:SetPoint("RIGHT", -28, 0)
       row.load:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
 
@@ -2065,6 +2106,27 @@ local function RenderPresetsList()
       UpdateStatus()
       SyncInputsFromSelected()
       print(string.format("|cff10b981Goblin Broker:|r активен шаблон «%s» (%d поз.).", nm, cnt))
+    end)
+
+    row.exp:SetScript("OnClick", function()
+      local ids = {}
+      for id in pairs(p.watchlist or {}) do table.insert(ids, id) end
+      table.sort(ids)
+      local lines = {}
+      for _, id in ipairs(ids) do
+        local price = p.watchlist[id]
+        local q = p.qtyLimits and p.qtyLimits[id]
+        if q and q > 0 then
+          table.insert(lines, string.format("%d=%d:%d", id, price, q))
+        else
+          table.insert(lines, string.format("%d=%d", id, price))
+        end
+      end
+      editBox:SetText(table.concat(lines, "\n"))
+      editBox:HighlightText()
+      imp:Show()
+      editBox:SetFocus()
+      print(string.format("|cff06b6d4Goblin Broker:|r экспорт шаблона «%s» (%d поз.) — скопируйте Ctrl+C.", nm, #lines))
     end)
 
     row.del:SetScript("OnClick", function()
@@ -2121,6 +2183,25 @@ end)
 
 preSaveBtn:SetScript("OnClick", function() SaveCurrentPreset(false) end)
 preNewBtn:SetScript("OnClick", function() SaveCurrentPreset(true) end)
+preStarterBtn:SetScript("OnClick", function()
+  ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+  local added = 0
+  for nm, data in pairs(PRO_STARTER_PRESETS) do
+    if not ForeverSniperDB.presets[nm] then
+      ForeverSniperDB.presets[nm] = {
+        watchlist = CopyTableShallow(data.watchlist),
+        qtyLimits = CopyTableShallow(data.qtyLimits),
+      }
+      added = added + 1
+    end
+  end
+  RenderPresetsList()
+  if added > 0 then
+    print(string.format("|cff10b981Goblin Broker:|r добавлено %d PRO-шаблонов под рынок Forever.", added))
+  else
+    print("|cff94a3b8Goblin Broker:|r все 5 PRO-шаблонов уже есть в списке.")
+  end
+end)
 preNameInput:SetScript("OnEnterPressed", function() SaveCurrentPreset(false) end)
 presetsBtn:SetScript("OnClick", function()
   if pre:IsShown() then
