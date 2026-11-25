@@ -1658,7 +1658,13 @@ UpdateStatus = function()
   end
 end
 
-ClearPendingDeal = function(keepLowestMsg)
+ClearPendingDeal = function(keepLowestMsg, skipCancel)
+  local prev = state.pendingDeal
+  if not skipCancel and prev and prev.isCommodity and prev.stage == "confirm" then
+    if C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
+      pcall(C_AuctionHouse.CancelCommoditiesPurchase)
+    end
+  end
   state.pendingDeal = nil
   skipBtn:SetFlatEnabled(false)
   dealStripe:SetColorTexture(0.25, 0.33, 0.45, 0.65)
@@ -1722,9 +1728,11 @@ local function ExecuteBuyAction(mouseButton)
   local cap = GetQtyCap(deal.itemID)
   local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
   local chosenQty = math.max(1, effectiveMax)
-  local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
 
   if not deal.isCommodity then
+    -- Execute PlaceBid FIRST for minimum latency, then record UI/receipt
+    C_AuctionHouse.PlaceBid(deal.auctionID, deal.unitPrice)
+    state.pauseScanUntil = GetTime() + 0.6
     local _, nm = GetItemVisuals(deal.itemID)
     local att = {
       itemID = deal.itemID,
@@ -1734,8 +1742,6 @@ local function ExecuteBuyAction(mouseButton)
       at = GetTime(),
       timeStr = date and date("%H:%M:%S") or "",
     }
-    C_AuctionHouse.PlaceBid(deal.auctionID, deal.unitPrice)
-    state.pauseScanUntil = GetTime() + 0.6
     RecordCompletedPurchase(att)
     ClearPendingDeal()
     return
@@ -1758,12 +1764,12 @@ local function ExecuteBuyAction(mouseButton)
   end
 
   if deal.stage == "confirm" then
-    -- Protect ultra-fast wheel ticks (<150ms) only if AH throttle is not yet ready
-    local ahReady = C_AuctionHouse.IsThrottledMessageSystemReady and C_AuctionHouse.IsThrottledMessageSystemReady()
-    if not deal.quoteReady and not ahReady and (GetTime() - (deal.confirmAt or 0)) < 0.15 then
+    -- Wait for server COMMODITY_PRICE_UPDATED quote (~50ms), with 0.35s lag fallback
+    if not deal.quoteReady and (GetTime() - (deal.confirmAt or 0)) < 0.35 then
       dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
       return
     end
+    local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
     local _, nm = GetItemVisuals(deal.itemID)
     state.lastPurchaseAttempt = {
       itemID = deal.itemID,
@@ -1775,7 +1781,7 @@ local function ExecuteBuyAction(mouseButton)
     }
     C_AuctionHouse.ConfirmCommoditiesPurchase(deal.itemID, chosenQty)
     state.pauseScanUntil = GetTime() + 0.6
-    ClearPendingDeal()
+    ClearPendingDeal(false, true)
   end
 end
 
@@ -1865,7 +1871,6 @@ local function SendTargetQuery()
   if #state.queue > 1 and not state.pendingDeal then
     state.idx = (state.idx % #state.queue) + 1
     ForeverSniperDB.selectedID = state.queue[state.idx]
-    SyncInputsFromSelected()
     rotated = true
   end
   local targetID = ForeverSniperDB.selectedID
@@ -2398,9 +2403,8 @@ local function RefreshOverrideBindings()
   end
 end
 
-f:EnableMouseWheel(true)
-f:SetScript("OnMouseWheel", function(_, delta)
-  if not state.ahOpen or not state.pendingDeal or not GetBindingKey then return end
+local function HandleBuyMouseWheel(delta)
+  if not state.ahOpen or not state.pendingDeal or not GetBindingKey then return false end
   local k1, k2 = GetBindingKey("FOREVERSNIPER_BUY")
   local wantUp = (delta > 0)
   local shift = IsShiftKeyDown and IsShiftKeyDown()
@@ -2410,8 +2414,21 @@ f:SetScript("OnMouseWheel", function(_, delta)
   local ev = prefix .. (wantUp and "MOUSEWHEELUP" or "MOUSEWHEELDOWN")
   if ev == k1 or ev == k2 then
     ExecuteBuyAction("LeftButton")
+    return true
   end
+  return false
+end
+
+f:EnableMouseWheel(true)
+f:SetScript("OnMouseWheel", function(_, delta)
+  HandleBuyMouseWheel(delta)
 end)
+
+if wlScroll then
+  wlScroll:HookScript("OnMouseWheel", function(_, delta)
+    HandleBuyMouseWheel(delta)
+  end)
+end
 
 f:HookScript("OnHide", function()
   if ClearOverrideBindings and not (InCombatLockdown and InCombatLockdown()) then
@@ -2513,19 +2530,44 @@ local function HookAuctionHouseFrame()
     f:Show()
     UpdateStatus()
     SyncInputsFromSelected()
+    RefreshOverrideBindings()
   end)
   AuctionHouseFrame:HookScript("OnHide", function()
     state.ahOpen = false
     ForeverSniperDB.autoScan = false
     ClearPendingDeal()
     UpdateStatus()
+    RefreshOverrideBindings()
   end)
   if AuctionHouseFrame:IsShown() then
     state.ahOpen = true
     f:Show()
     UpdateStatus()
     SyncInputsFromSelected()
+    RefreshOverrideBindings()
   end
+end
+
+local tierPrices, tierQtys, tierCount = {}, {}, 0
+local function ComputeTierCost(wantQty)
+  local rem = wantQty
+  local sum = 0
+  for i = 1, tierCount do
+    if rem <= 0 then break end
+    local take = math.min(rem, tierQtys[i])
+    sum = sum + take * tierPrices[i]
+    rem = rem - take
+  end
+  return sum
+end
+
+local function TryInstantNextQuery()
+  if not state.ahOpen or not ForeverSniperDB.autoScan or state.pendingDeal then return end
+  local now = GetTime()
+  if now < (state.pauseScanUntil or 0) then return end
+  if now - (state.lastQueryAt or 0) < (state.queryInterval or 0.25) then return end
+  if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
+  SendTargetQuery()
 end
 
 f:RegisterEvent("PLAYER_LOGIN")
@@ -2572,19 +2614,17 @@ f:SetScript("OnEvent", function(_, event, arg1)
     end
     UpdateStatus()
   elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
-    state.throttled = false
-    if state.pendingDeal then
-      if state.pendingDeal.stage == "confirm" then
-        state.pendingDeal.quoteReady = true
-        dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
-      elseif state.pendingDeal.stage == "ready" then
-        dealBadge:SetText(DOT_GREEN .. " |cff10b981ГОТОВО - ЖМИТЕ КУПИТЬ|r")
-      end
+    if state.throttled then
+      state.throttled = false
+      statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
+    end
+    if state.pendingDeal and state.pendingDeal.stage == "ready" then
+      dealBadge:SetText(DOT_GREEN .. " |cff10b981ГОТОВО - ЖМИТЕ КУПИТЬ|r")
     end
     if GetTime() >= (state.pauseScanUntil or 0) then
-      state.lastQueryAt = 0 -- Fire next query on the very next frame
+      state.lastQueryAt = 0 -- Fire next query immediately when throttle bucket frees
+      TryInstantNextQuery()
     end
-    UpdateStatus()
   elseif event == "AUCTION_HOUSE_SHOW" then
     state.ahOpen = true
     state.throttled = false
@@ -2601,8 +2641,12 @@ f:SetScript("OnEvent", function(_, event, arg1)
     RefreshOverrideBindings()
   elseif event == "COMMODITY_PRICE_UPDATED" then
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
+      local wasReady = state.pendingDeal.quoteReady
       state.pendingDeal.quoteReady = true
       dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+      if not wasReady and IsSoundEnabled() and PlaySound then
+        pcall(PlaySound, 8959, "Master")
+      end
     end
   elseif event == "COMMODITY_PRICE_UNAVAILABLE" then
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
@@ -2625,6 +2669,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
       state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот перехвачен - перескан...|r"
       RefreshSessionBar()
     end
+    state.pauseScanUntil = 0
     state.lastQueryAt = 0
   elseif event == "COMMODITY_SEARCH_RESULTS_UPDATED" and arg1 then
     local itemID = tonumber(arg1)
@@ -2636,7 +2681,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     local totalAvail = 0
     local minUnitPrice = nil
     local lowestSeen = nil
-    local tiers = {}
+    tierCount = 0
     for i = 1, num do
       local res = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
       if res and res.unitPrice and res.unitPrice > 0 then
@@ -2648,7 +2693,9 @@ f:SetScript("OnEvent", function(_, event, arg1)
           local q = res.quantity or 0
           if q > 0 then
             totalAvail = totalAvail + q
-            table.insert(tiers, { price = res.unitPrice, qty = q })
+            tierCount = tierCount + 1
+            tierPrices[tierCount] = res.unitPrice
+            tierQtys[tierCount] = q
           end
         else
           -- Results are sorted ascending by price (PRICE_SORTS)
@@ -2666,7 +2713,6 @@ f:SetScript("OnEvent", function(_, event, arg1)
     state.lastSeenByItem[itemID].updatedAt = GetTime()
 
     if minUnitPrice and totalAvail > 0 then
-      table.sort(tiers, function(a, b) return a.price < b.price end)
       local _, cachedName = GetItemVisuals(itemID)
       SetPendingDeal({
         itemID = itemID,
@@ -2676,22 +2722,13 @@ f:SetScript("OnEvent", function(_, event, arg1)
         maxPrice = maxPrice,
         name = cachedName,
         stage = "ready",
-        exactCostForQty = function(wantQty)
-          local rem = wantQty
-          local sum = 0
-          for _, t in ipairs(tiers) do
-            if rem <= 0 then break end
-            local take = math.min(rem, t.qty)
-            sum = sum + take * t.price
-            rem = rem - take
-          end
-          return sum
-        end,
+        exactCostForQty = ComputeTierCost,
       })
       RenderWatchlist()
     else
       -- Fast zero-redraw exit when market is unchanged above limit
       if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
+        TryInstantNextQuery()
         return
       end
       ClearPendingDeal(true)
@@ -2714,6 +2751,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         dealQtyRight:SetText("")
         dealTotalRight:SetText("")
       end
+      TryInstantNextQuery()
     end
   elseif event == "ITEM_SEARCH_RESULTS_UPDATED" and arg1 then
     local itemID = arg1.itemID
@@ -2735,18 +2773,23 @@ f:SetScript("OnEvent", function(_, event, arg1)
           if not bestAuction or res.buyoutAmount < bestAuction.buyoutAmount then
             bestAuction = res
           end
+        else
+          -- Results are sorted ascending by price (PRICE_SORTS)
+          break
         end
       end
     end
     state.lastSeenByItem = state.lastSeenByItem or {}
-    state.lastSeenByItem[itemID] = {
-      lowestPrice = lowestSeen,
-      availBelow = matchCount,
-      updatedAt = GetTime(),
-    }
-    RenderWatchlist()
+    local prevSeen = state.lastSeenByItem[itemID]
+    local prevLowest = prevSeen and prevSeen.lowestPrice
+    local prevAvail = prevSeen and prevSeen.availBelow or 0
+    state.lastSeenByItem[itemID] = prevSeen or {}
+    state.lastSeenByItem[itemID].lowestPrice = lowestSeen
+    state.lastSeenByItem[itemID].availBelow = matchCount
+    state.lastSeenByItem[itemID].updatedAt = GetTime()
+
     if bestAuction then
-      local info = C_AuctionHouse.GetItemKeyInfo(arg1)
+      local _, cachedName = GetItemVisuals(itemID)
       SetPendingDeal({
         itemID = itemID,
         isCommodity = false,
@@ -2754,10 +2797,17 @@ f:SetScript("OnEvent", function(_, event, arg1)
         unitPrice = bestAuction.buyoutAmount,
         qty = 1,
         maxPrice = maxPrice,
-        name = info and info.itemName or nil,
+        name = cachedName,
         stage = "ready",
       })
+      RenderWatchlist()
       found = true
+    else
+      if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
+        TryInstantNextQuery()
+        return
+      end
+      RenderWatchlist()
     end
     if not found then
       ClearPendingDeal(true)
@@ -2779,6 +2829,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
         dealQtyRight:SetText("")
         dealTotalRight:SetText("")
       end
+      TryInstantNextQuery()
     end
   end
 end)

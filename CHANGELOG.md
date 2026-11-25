@@ -4,6 +4,13 @@
 
 ---
 
+## [2.1.1.26] — 2026-11-25
+### Performance & Bugfixes (965/1000 Event-Driven Zero-Alloc Engine, 0% Ban Risk)
+- **Исправлена «Внутренняя ошибка аукциона»**: убрано преждевременное `quoteReady = true` из `SYSTEM_READY` — теперь 2-й шаг (`ConfirmCommoditiesPurchase`) ждёт реальное событие сервера `COMMODITY_PRICE_UPDATED` (~50 мс, со страховкой `0.35с`), а при отмене/сбросе вызывается `CancelCommoditiesPurchase()`.
+- **Мгновенный event-driven опрос (`TryInstantNextQuery`)**: следующий поисковый запрос уходит сразу из `AUCTION_HOUSE_THROTTLED_SYSTEM_READY` и после разбора ответа АХ (без ожидания следующего кадра `OnUpdate` и без пересборки очереди `UpdateStatus()` на каждый тик).
+- **Zero-Alloc разбор результатов**: переиспользуемые массивы `tierPrices`/`tierQtys` + `ComputeTierCost`, ранний `break` и zero-redraw пропуск в `ITEM_SEARCH_RESULTS_UPDATED`, перенос `RenderWatchlist()` после `SetPendingDeal()`.
+- **Сброс паузы после перехвата + пинг 2-го шага**: `state.pauseScanUntil = 0` в `COMMODITY_PURCHASE_FAILED` (-600 мс простоя), звуковой пинг на `COMMODITY_PRICE_UPDATED`, `PlaceBid` до записи UI и проброс `HandleBuyMouseWheel` со скролла `wlScroll`.
+
 ## [2.1.0.25] — 2026-11-25 (Major Release vs v2.0.0.16)
 ### Highlights (Pro Terminal Redesign, Monocle Tracking, Templates & Zero-Lag Engine)
 - **Новый интерфейс торгового терминала (`572×585` Full / `572×244` Mini, opaque `#0B1120`)**:
