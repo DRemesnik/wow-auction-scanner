@@ -1,7 +1,7 @@
 # Goblin Broker: Forever (`ForeverSniper`) v2.0.0.16 — Установка и быстрый старт
 
 ## 1. Установка аддона
-1. Скачайте и распакуйте архив **`ForeverSniper-v2.0.0.16.zip`**.
+1. Скачайте и распакуйте архив **`GoblinBrokerForever-v2.0.0.16.zip`**.
 2. Скопируйте папку **`ForeverSniper`** в каталог аддонов вашего клиента WoW:
    ```text
    <Путь_к_WoW>\_forever_\Interface\AddOns\ForeverSniper\
