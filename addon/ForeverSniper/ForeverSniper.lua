@@ -16,6 +16,7 @@ ForeverSniperDB = ForeverSniperDB or {
   autoScan = false,
   soundAlert = true,
   miniMode = false,
+  railExpanded = false,
 }
 
 local function IsSoundEnabled()
@@ -285,7 +286,7 @@ end
 -- Main Frame (Goblin Broker: Forever — Branded Navy / Gold / Emerald)
 -- ============================================================================
 local f = CreateFrame("Frame", "ForeverSniperFrame", UIParent, "BackdropTemplate")
-f:SetSize(564, 616)
+f:SetSize(572, 585)
 f:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -30, 100)
 f:SetFrameStrata("DIALOG")
 f:SetToplevel(true)
@@ -296,7 +297,7 @@ f:RegisterForDrag("LeftButton")
 f:SetScript("OnDragStart", f.StartMoving)
 f:SetScript("OnDragStop", f.StopMovingOrSizing)
 f:SetBackdrop(FLAT_BACKDROP)
-f:SetBackdropColor(0.043, 0.067, 0.125, 0.97) -- #0B1120 Goblin Broker Navy
+f:SetBackdropColor(0.043, 0.067, 0.125, 1) -- #0B1120 Goblin Broker Navy (opaque)
 f:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
 f:Hide()
 
@@ -310,14 +311,14 @@ topAccent:SetGradient("HORIZONTAL", CreateColor(0.92, 0.70, 0.03, 1), CreateColo
 
 -- Brand Logo Mark (Logo #1: Gold Goblin Head + Emerald Monocle)
 local brandMark = CreateFrame("Frame", nil, f, "BackdropTemplate")
-brandMark:SetSize(32, 32)
-brandMark:SetPoint("TOPLEFT", 16, -12)
+brandMark:SetSize(36, 36)
+brandMark:SetPoint("TOPLEFT", 14, -8)
 brandMark:SetBackdrop(FLAT_BACKDROP)
 brandMark:SetBackdropColor(0.07, 0.10, 0.18, 1)
 brandMark:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.65)
 
 local brandLogo = brandMark:CreateTexture(nil, "ARTWORK")
-brandLogo:SetSize(26, 26)
+brandLogo:SetSize(28, 28)
 brandLogo:SetPoint("CENTER")
 brandLogo:SetTexture(LOGO_PATH)
 
@@ -331,7 +332,7 @@ subtitle:SetText("|cff94a3b8EU Орда | AH Снайпер (1с)|r")
 
 -- Close button
 local closeBtn = CreateFlatButton(nil, f, 26, 26, "X")
-closeBtn:SetPoint("TOPRIGHT", -16, -15)
+closeBtn:SetPoint("TOPRIGHT", -12, -13)
 closeBtn:SetColors({ 0.10, 0.13, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.22, 0.28, 0.40, 1 }, { 0.85, 0.89, 0.95 })
 closeBtn:SetScript("OnClick", function() f:Hide() end)
 
@@ -347,22 +348,94 @@ local statusText = statusPill:CreateFontString(nil, "OVERLAY", "GameFontHighligh
 statusText:SetPoint("CENTER")
 statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
 
--- Sound Alert Toggle (works in background via Sound_EnableSoundWhenGameIsInBG)
-local soundBtn = CreateFlatButton(nil, f, 80, 26, "Звук: ВКЛ")
-soundBtn:SetPoint("RIGHT", statusPill, "LEFT", -6, 0)
+local hdrDiv = f:CreateTexture(nil, "ARTWORK")
+hdrDiv:SetHeight(1)
+hdrDiv:SetPoint("TOPLEFT", 12, -50)
+hdrDiv:SetPoint("TOPRIGHT", -12, -50)
+hdrDiv:SetColorTexture(0.18, 0.24, 0.36, 0.75)
 
--- Compact Mini Sniper Mode Toggle
-local miniBtn = CreateFlatButton(nil, f, 54, 26, "Мини")
-miniBtn:SetPoint("RIGHT", soundBtn, "LEFT", -6, 0)
-miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.78, 0.84, 0.94 })
+-- ============================================================================
+-- Left Expandable Tool Sidebar (under app logo: 40px icons <-> 134px icons+labels)
+-- ============================================================================
+local toolRail = CreateFrame("Frame", nil, f, "BackdropTemplate")
+toolRail:SetWidth(36)
+toolRail:SetPoint("TOPLEFT", 14, -60)
+toolRail:SetPoint("BOTTOMLEFT", 14, 14)
+toolRail:SetBackdrop(FLAT_BACKDROP)
+toolRail:SetBackdropColor(0.028, 0.042, 0.082, 1)
+toolRail:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
+
+local railButtons = {}
+local function MakeRailButton(yParent, yOff, texPath, labelTxt, isBottom)
+  local btn = CreateFlatButton(nil, toolRail, 28, 26, "")
+  if isBottom then
+    btn:SetPoint("BOTTOMLEFT", 4, 4)
+    btn:SetPoint("BOTTOMRIGHT", -4, 4)
+  elseif yParent then
+    btn:SetPoint("TOPLEFT", yParent, "BOTTOMLEFT", 0, yOff)
+    btn:SetPoint("TOPRIGHT", yParent, "BOTTOMRIGHT", 0, yOff)
+  else
+    btn:SetPoint("TOPLEFT", 4, yOff)
+    btn:SetPoint("TOPRIGHT", -4, yOff)
+  end
+  if texPath then
+    local ico = btn:CreateTexture(nil, "ARTWORK")
+    ico:SetSize(18, 18)
+    ico:SetPoint("LEFT", 5, 0)
+    ico:SetTexture(texPath)
+    ico:SetTexCoord(0, 1, 0, 1)
+    btn.ico = ico
+  end
+  local txt = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  txt:SetPoint("LEFT", 28, 0)
+  txt:SetPoint("RIGHT", -4, 0)
+  txt:SetJustifyH("LEFT")
+  txt:SetWordWrap(false)
+  txt:SetText(labelTxt or "")
+  txt:Hide()
+  btn.railText = txt
+  table.insert(railButtons, btn)
+  return btn
+end
+
+-- 0. Expand / Collapse Sidebar Toggle
+local railToggleBtn = CreateFlatButton(nil, toolRail, 28, 22, ">>")
+railToggleBtn:SetPoint("TOPLEFT", 4, -4)
+railToggleBtn:SetPoint("TOPRIGHT", -4, -4)
+railToggleBtn:SetColors({ 0.07, 0.10, 0.17, 1 }, { 0.13, 0.18, 0.28, 1 }, { 0.20, 0.28, 0.40, 0.7 }, { 0.78, 0.86, 0.96 })
+railToggleBtn:HookScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:AddLine(ForeverSniperDB.railExpanded and "Свернуть панель" or "Развернуть панель с названиями", 0.96, 0.70, 0.03)
+  GameTooltip:Show()
+end)
+railToggleBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+
+-- 1. Mini / Full Mode Toggle
+local miniBtn = MakeRailButton(railToggleBtn, -6, "Interface\\AddOns\\ForeverSniper\\rail_mini.tga", "Мини-режим")
+miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.85, 0.90, 0.96 })
+miniBtn:HookScript("OnEnter", function(self)
+  if ForeverSniperDB.railExpanded then return end
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:AddLine(ForeverSniperDB.miniMode and "Полный режим" or "Мини-режим", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Свернуть/развернуть список и настройки", 0.85, 0.90, 0.96)
+  GameTooltip:Show()
+end)
+miniBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+
+-- 2. Sound Alert Toggle (works in background via Sound_EnableSoundWhenGameIsInBG)
+local soundBtn = MakeRailButton(miniBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_sound.tga", "Звук: ВКЛ")
 
 local function RefreshSoundBtn()
   if IsSoundEnabled() then
-    soundBtn:SetLabel(DOT_GREEN .. " Звук: ВКЛ")
-    soundBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
+    soundBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.8 }, { 0.85, 1, 0.94 })
+    soundBtn.ico:SetDesaturated(false)
+    soundBtn.ico:SetAlpha(1)
+    soundBtn.railText:SetText("|cff10b981Звук: ВКЛ|r")
   else
-    soundBtn:SetLabel(DOT_GRAY .. " Звук: ВЫКЛ")
-    soundBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.58, 0.65, 0.75 })
+    soundBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.45, 0.52, 0.62 })
+    soundBtn.ico:SetDesaturated(true)
+    soundBtn.ico:SetAlpha(0.45)
+    soundBtn.railText:SetText("|cff64748bЗвук: ВЫКЛ|r")
   end
 end
 
@@ -378,9 +451,10 @@ soundBtn:SetScript("OnClick", function()
 end)
 
 soundBtn:HookScript("OnEnter", function(self)
+  if ForeverSniperDB.railExpanded then return end
   if GameTooltip then
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:AddLine("Звуковой сигнал при появлении лота")
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(IsSoundEnabled() and "Звуковой сигнал: ВКЛ" or "Звуковой сигнал: ВЫКЛ", 0.96, 0.70, 0.03)
     GameTooltip:AddLine("Работает даже в фоновом режиме (Alt+Tab)", 0.65, 0.75, 0.85)
     GameTooltip:Show()
   end
@@ -389,18 +463,69 @@ soundBtn:HookScript("OnLeave", function()
   if GameTooltip then GameTooltip:Hide() end
 end)
 
-local hdrDiv = f:CreateTexture(nil, "ARTWORK")
-hdrDiv:SetHeight(1)
-hdrDiv:SetPoint("TOPLEFT", 16, -52)
-hdrDiv:SetPoint("TOPRIGHT", -16, -52)
-hdrDiv:SetColorTexture(0.18, 0.24, 0.36, 0.75)
+-- 3. Session Purchase Log Button (with numeric badge when > 0)
+local logBtn = MakeRailButton(soundBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_log.tga", "Лог (0)")
+logBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.92, 0.70, 0.03 })
+
+local logBadgeCount = logBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+logBadgeCount:SetPoint("TOPRIGHT", 2, 2)
+logBadgeCount:SetText("")
+logBadgeCount:Hide()
+
+local railDiv = toolRail:CreateTexture(nil, "ARTWORK")
+railDiv:SetHeight(1)
+railDiv:SetPoint("TOPLEFT", logBtn, "BOTTOMLEFT", 4, -6)
+railDiv:SetPoint("TOPRIGHT", logBtn, "BOTTOMRIGHT", -4, -6)
+railDiv:SetColorTexture(0.20, 0.28, 0.40, 0.85)
+
+-- 4. Presets & Import (shown in Full Mode)
+local presetsBtn = MakeRailButton(logBtn, -13, "Interface\\AddOns\\ForeverSniper\\rail_presets.tga", "Пресеты")
+presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.96, 0.85, 0.55 })
+presetsBtn:HookScript("OnEnter", function(self)
+  if ForeverSniperDB.railExpanded then return end
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:AddLine("Пресеты (шаблоны)", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Стартовые [PRO], сохранение и экспорт", 0.85, 0.90, 0.96)
+  GameTooltip:Show()
+end)
+presetsBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+
+local importBtn = MakeRailButton(presetsBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_import.tga", "Импорт")
+importBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.0, 0.71, 0.85, 0.65 }, { 0.75, 0.92, 1 })
+importBtn:HookScript("OnEnter", function(self)
+  if ForeverSniperDB.railExpanded then return end
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:AddLine("Импорт из дашборда", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Вставить список itemID=цена[:кол-во]", 0.85, 0.90, 0.96)
+  GameTooltip:Show()
+end)
+importBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+
+-- 5. Keybind / Sniper Hotkey Info (pinned to bottom of rail)
+local hotkeyBtn = MakeRailButton(nil, nil, "Interface\\AddOns\\ForeverSniper\\rail_hotkey.tga", "Клавиши", true)
+hotkeyBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.98, 0.94, 0.54 })
+hotkeyBtn:HookScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:AddLine("Горячие клавиши", 0.96, 0.70, 0.03)
+  local bk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BUY")
+  local sk = GetBindingKey and GetBindingKey("FOREVERSNIPER_SCAN")
+  GameTooltip:AddDoubleLine("Купить / Подтв.:", bk or "не задана", 0.85, 0.90, 0.96, 0.98, 0.94, 0.54)
+  GameTooltip:AddDoubleLine("Старт / Пауза:", sk or "не задана", 0.85, 0.90, 0.96, 0.85, 0.90, 0.96)
+  GameTooltip:AddLine("Назначить: ESC -> Назначение клавиш -> Goblin Broker", 0.60, 0.72, 0.84, true)
+  GameTooltip:Show()
+end)
+hotkeyBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+hotkeyBtn:SetScript("OnClick", function()
+  local bk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BUY")
+  print("|cfff59e0bGoblin Broker:|r клавиша покупки: |cfffef08a" .. (bk or "не задана") .. "|r (ESC -> Назначение клавиш -> Goblin Broker: Forever).")
+end)
 
 -- ============================================================================
--- Section 1: Target Configuration Card (Spacious 2-Row Form)
+-- Section 1: Target Configuration Card (500px main column to the right of toolRail)
 -- ============================================================================
 local cfgCard = CreateFrame("Frame", nil, f, "BackdropTemplate")
-cfgCard:SetPoint("TOPLEFT", 16, -62)
-cfgCard:SetPoint("TOPRIGHT", -16, -62)
+cfgCard:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, 0)
+cfgCard:SetPoint("TOPRIGHT", -12, -60)
 cfgCard:SetHeight(124)
 cfgCard:SetBackdrop(FLAT_BACKDROP)
 cfgCard:SetBackdropColor(0.067, 0.094, 0.153, 1)
@@ -425,26 +550,16 @@ iconFrame:SetScript("OnLeave", function()
   if GameTooltip then GameTooltip:Hide() end
 end)
 
-local nextTargetBtn = CreateFlatButton(nil, cfgCard, 26, 26, ">")
-nextTargetBtn:SetPoint("TOPRIGHT", -12, -18)
-
-local queueCounter = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-queueCounter:SetPoint("RIGHT", nextTargetBtn, "LEFT", -8, 0)
-queueCounter:SetText("|cff94a3b80/0|r")
-
-local prevTargetBtn = CreateFlatButton(nil, cfgCard, 26, 26, "<")
-prevTargetBtn:SetPoint("RIGHT", queueCounter, "LEFT", -8, 0)
-
 local targetNameText = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 targetNameText:SetPoint("TOPLEFT", iconFrame, "TOPRIGHT", 10, -2)
-targetNameText:SetPoint("RIGHT", prevTargetBtn, "LEFT", -10, 0)
+targetNameText:SetPoint("RIGHT", cfgCard, "RIGHT", -12, 0)
 targetNameText:SetJustifyH("LEFT")
 targetNameText:SetWordWrap(false)
 targetNameText:SetText("Нет выбранного предмета")
 
 local targetSubText = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 targetSubText:SetPoint("BOTTOMLEFT", iconFrame, "BOTTOMRIGHT", 10, 2)
-targetSubText:SetPoint("RIGHT", prevTargetBtn, "LEFT", -10, 0)
+targetSubText:SetPoint("RIGHT", cfgCard, "RIGHT", -12, 0)
 targetSubText:SetJustifyH("LEFT")
 targetSubText:SetWordWrap(false)
 targetSubText:SetText("|cff64748bЗадайте ID и лимит ниже или нажмите Импорт|r")
@@ -455,13 +570,13 @@ cfgDiv:SetPoint("TOPLEFT", 12, -58)
 cfgDiv:SetPoint("TOPRIGHT", -12, -58)
 cfgDiv:SetColorTexture(0.16, 0.22, 0.34, 0.65)
 
--- Row 1: ID + Max Unit Price (g / s / c)
+-- Row 1: ID + Max Unit Price (g / s / c, right-aligned to -12)
 local idLabel = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 idLabel:SetPoint("TOPLEFT", 12, -70)
 idLabel:SetText("|cff94a3b8ID предмета:|r")
 
 local idInput = CreateFrame("EditBox", nil, cfgCard, "BackdropTemplate")
-StyleFlatBox(idInput, 78, 24)
+StyleFlatBox(idInput, 82, 24)
 idInput:SetPoint("LEFT", idLabel, "RIGHT", 6, 0)
 idInput:SetScript("OnTextChanged", function(self, userInput)
   local txt = self:GetText() or ""
@@ -487,41 +602,41 @@ idInput:SetScript("OnTextChanged", function(self, userInput)
   end
 end)
 
-local limLabel = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-limLabel:SetPoint("LEFT", idInput, "RIGHT", 18, 0)
-limLabel:SetText("|cff94a3b8Макс. цена:|r")
-
-local goldInput = CreateFrame("EditBox", nil, cfgCard, "BackdropTemplate")
-StyleFlatBox(goldInput, 58, 24)
-goldInput:SetPoint("LEFT", limLabel, "RIGHT", 8, 0)
-goldInput:SetNumeric(true)
-goldInput:SetJustifyH("RIGHT")
-
-local gUnit = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-gUnit:SetPoint("LEFT", goldInput, "RIGHT", 4, 0)
-gUnit:SetText(ICON_GOLD)
-
-local silverInput = CreateFrame("EditBox", nil, cfgCard, "BackdropTemplate")
-StyleFlatBox(silverInput, 36, 24)
-silverInput:SetPoint("LEFT", gUnit, "RIGHT", 8, 0)
-silverInput:SetNumeric(true)
-silverInput:SetMaxLetters(2)
-silverInput:SetJustifyH("RIGHT")
-
-local sUnit = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-sUnit:SetPoint("LEFT", silverInput, "RIGHT", 4, 0)
-sUnit:SetText(ICON_SILVER)
+local cUnit = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+cUnit:SetPoint("RIGHT", cfgCard, "TOPRIGHT", -12, -75)
+cUnit:SetText(ICON_COPPER)
 
 local copperInput = CreateFrame("EditBox", nil, cfgCard, "BackdropTemplate")
 StyleFlatBox(copperInput, 36, 24)
-copperInput:SetPoint("LEFT", sUnit, "RIGHT", 8, 0)
+copperInput:SetPoint("RIGHT", cUnit, "LEFT", -4, 0)
 copperInput:SetNumeric(true)
 copperInput:SetMaxLetters(2)
 copperInput:SetJustifyH("RIGHT")
 
-local cUnit = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-cUnit:SetPoint("LEFT", copperInput, "RIGHT", 4, 0)
-cUnit:SetText(ICON_COPPER)
+local sUnit = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+sUnit:SetPoint("RIGHT", copperInput, "LEFT", -8, 0)
+sUnit:SetText(ICON_SILVER)
+
+local silverInput = CreateFrame("EditBox", nil, cfgCard, "BackdropTemplate")
+StyleFlatBox(silverInput, 36, 24)
+silverInput:SetPoint("RIGHT", sUnit, "LEFT", -4, 0)
+silverInput:SetNumeric(true)
+silverInput:SetMaxLetters(2)
+silverInput:SetJustifyH("RIGHT")
+
+local gUnit = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+gUnit:SetPoint("RIGHT", silverInput, "LEFT", -8, 0)
+gUnit:SetText(ICON_GOLD)
+
+local goldInput = CreateFrame("EditBox", nil, cfgCard, "BackdropTemplate")
+StyleFlatBox(goldInput, 64, 24)
+goldInput:SetPoint("RIGHT", gUnit, "LEFT", -4, 0)
+goldInput:SetNumeric(true)
+goldInput:SetJustifyH("RIGHT")
+
+local limLabel = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+limLabel:SetPoint("RIGHT", goldInput, "LEFT", -8, 0)
+limLabel:SetText("|cff94a3b8Макс. цена:|r")
 
 -- Row 2: Max Qty per Buy + Apply CTA
 local maxLimitLabel = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -536,10 +651,11 @@ maxQtyLimitInput:SetJustifyH("RIGHT")
 
 local maxLimitHint = cfgCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 maxLimitHint:SetPoint("LEFT", maxQtyLimitInput, "RIGHT", 8, 0)
-maxLimitHint:SetText("|cff64748b(0 или пусто = все)|r")
+maxLimitHint:SetText("|cff64748b(0 = все)|r")
 
 local setTargetBtn = CreateFlatButton(nil, cfgCard, 128, 24, "Применить")
-setTargetBtn:SetPoint("BOTTOMRIGHT", -12, 8)
+setTargetBtn:SetPoint("TOP", maxQtyLimitInput, "TOP", 0, 0)
+setTargetBtn:SetPoint("RIGHT", cfgCard, "RIGHT", -12, 0)
 setTargetBtn:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.62, 0.44, 0.03, 1 }, { 0.92, 0.70, 0.03, 0.9 }, { 1, 0.96, 0.85 })
 
 -- Defined after targetNameText / targetSubText / idInput / goldInput so upvalues resolve cleanly
@@ -585,19 +701,15 @@ end)
 -- ============================================================================
 -- Section 2: Watchlist Overview (Quick glance & click-to-select)
 -- ============================================================================
+local trackBtn = CreateFlatButton(nil, f, 146, 20, DOT_GRAY .. " Выбрано: 0")
+trackBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -6)
+
 local wlHeader = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-wlHeader:SetPoint("TOPLEFT", cfgCard, "BOTTOMLEFT", 2, -12)
+wlHeader:SetPoint("LEFT", cfgCard, "BOTTOMLEFT", 2, -16)
+wlHeader:SetPoint("RIGHT", trackBtn, "LEFT", -8, 0)
 wlHeader:SetJustifyH("LEFT")
 wlHeader:SetWordWrap(false)
 wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
-
-local trackBtn = CreateFlatButton(nil, f, 146, 20, DOT_GRAY .. " Выбрано: 0")
-trackBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -9)
-
-local presetsBtn = CreateFlatButton(nil, f, 90, 20, "Пресеты")
-presetsBtn:SetPoint("RIGHT", trackBtn, "LEFT", -6, 0)
-presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.55 }, { 0.96, 0.85, 0.55 })
-wlHeader:SetPoint("RIGHT", presetsBtn, "LEFT", -8, 0)
 
 local function RefreshTrackBtn()
   local total = state.allItems and #state.allItems or 0
@@ -643,7 +755,7 @@ end)
 trackBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 local wlBox = CreateFrame("Frame", nil, f, "BackdropTemplate")
-wlBox:SetPoint("TOPLEFT", wlHeader, "BOTTOMLEFT", -2, -6)
+wlBox:SetPoint("TOPLEFT", cfgCard, "BOTTOMLEFT", 0, -29)
 wlBox:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -29)
 wlBox:SetHeight(178)
 wlBox:SetBackdrop(FLAT_BACKDROP)
@@ -669,7 +781,7 @@ if wlScrollBar then
 end
 
 local wlContent = CreateFrame("Frame", nil, wlScroll)
-wlContent:SetSize(502, 168)
+wlContent:SetSize(490, 168)
 wlScroll:SetScrollChild(wlContent)
 
 local wlRows = {}
@@ -724,73 +836,35 @@ dealMeta:SetWordWrap(false)
 dealMeta:SetText("")
 
 -- ============================================================================
--- Section 4: Purchase Execution Row
+-- Section 4: Execution Dock (Utility Row + Full-Width Hero Buy CTA)
 -- ============================================================================
 local execRow = CreateFrame("Frame", nil, f)
-execRow:SetPoint("TOPLEFT", dealCard, "BOTTOMLEFT", 0, -10)
-execRow:SetPoint("TOPRIGHT", dealCard, "BOTTOMRIGHT", 0, -10)
-execRow:SetHeight(38)
+execRow:SetPoint("TOPLEFT", dealCard, "BOTTOMLEFT", 0, -8)
+execRow:SetPoint("TOPRIGHT", dealCard, "BOTTOMRIGHT", 0, -8)
+execRow:SetHeight(28)
 
-local qtyLabel = execRow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-qtyLabel:SetPoint("LEFT", 0, 0)
-qtyLabel:SetText("|cff94a3b8Купить:|r")
+local scanBtn = CreateFlatButton("ForeverSniperScanBtn", execRow, 246, 28, "Старт скан")
+scanBtn:SetPoint("LEFT", 0, 0)
 
-local qtyInput = CreateFrame("EditBox", nil, execRow, "BackdropTemplate")
-StyleFlatBox(qtyInput, 68, 36)
-qtyInput:SetFontObject("GameFontNormalLarge")
-qtyInput:SetPoint("LEFT", qtyLabel, "RIGHT", 6, 0)
-qtyInput:SetNumeric(true)
-qtyInput:SetJustifyH("CENTER")
-qtyInput:SetText("0")
+local skipBtn = CreateFlatButton(nil, execRow, 246, 28, "Сброс лота")
+skipBtn:SetPoint("RIGHT", 0, 0)
+skipBtn:SetFlatEnabled(false)
 
-local maxQtyBtn = CreateFlatButton(nil, execRow, 46, 34, "МАКС")
-maxQtyBtn:SetPoint("LEFT", qtyInput, "RIGHT", 4, 0)
-maxQtyBtn:SetColors({ 0.10, 0.14, 0.22, 1 }, { 0.15, 0.21, 0.32, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.92, 0.70, 0.03 })
-
-local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", execRow, 358, 36, "Нет активного лота")
-buyBtn:SetPoint("RIGHT", 0, 0)
+local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", f, 500, 46, "Нет активного лота")
+buyBtn:SetPoint("TOPLEFT", execRow, "BOTTOMLEFT", 0, -8)
+buyBtn:SetPoint("TOPRIGHT", execRow, "BOTTOMRIGHT", 0, -8)
 buyBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-buyBtn.label:SetFontObject("GameFontNormal")
-buyBtn.label:SetWidth(346)
+buyBtn.label:SetFontObject("GameFontNormalLarge")
+buyBtn.label:SetWidth(484)
 buyBtn.label:SetWordWrap(false)
 buyBtn:SetColors({ 0.11, 0.15, 0.22, 1 }, { 0.11, 0.15, 0.22, 1 }, { 0.20, 0.27, 0.38, 1 }, { 0.72, 0.78, 0.88 })
 buyBtn:SetFlatEnabled(false)
 
 -- ============================================================================
--- Session Purchase Receipt Strip (between execRow & footer)
--- ============================================================================
-local sessionBar = CreateFrame("Frame", nil, f, "BackdropTemplate")
-sessionBar:SetPoint("TOPLEFT", execRow, "BOTTOMLEFT", 0, -8)
-sessionBar:SetPoint("TOPRIGHT", execRow, "BOTTOMRIGHT", 0, -8)
-sessionBar:SetHeight(24)
-sessionBar:SetBackdrop(FLAT_BACKDROP)
-sessionBar:SetBackdropColor(0.035, 0.050, 0.095, 1)
-sessionBar:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.85)
-sessionBar:EnableMouse(true)
-
-local sessionOutcomeText = sessionBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-sessionOutcomeText:SetPoint("LEFT", 10, 0)
-sessionOutcomeText:SetJustifyH("LEFT")
-sessionOutcomeText:SetText("|cff64748bПокупок за сессию ещё не было|r")
-
-local clearHistBarBtn = CreateFlatButton(nil, sessionBar, 18, 18, "x")
-clearHistBarBtn:SetPoint("RIGHT", -4, 0)
-clearHistBarBtn:SetColors({ 0.11, 0.14, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.20, 0.26, 0.36, 1 }, { 0.75, 0.80, 0.88 })
-
-local logBtn = CreateFlatButton(nil, sessionBar, 64, 18, "Лог (0)")
-logBtn:SetPoint("RIGHT", clearHistBarBtn, "LEFT", -4, 0)
-logBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.92, 0.70, 0.03 })
-
-local sessionTotalsText = sessionBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-sessionTotalsText:SetPoint("RIGHT", logBtn, "LEFT", -8, 0)
-sessionTotalsText:SetJustifyH("RIGHT")
-sessionTotalsText:SetText("")
-
--- ============================================================================
 -- Detailed Session Purchase Log Window
 -- ============================================================================
 local logFrame = CreateFrame("Frame", "ForeverSniperLogFrame", UIParent, "BackdropTemplate")
-logFrame:SetSize(524, 436)
+logFrame:SetSize(572, 585)
 logFrame:SetPoint("CENTER")
 logFrame:SetFrameStrata("DIALOG")
 logFrame:SetToplevel(true)
@@ -801,7 +875,7 @@ logFrame:RegisterForDrag("LeftButton")
 logFrame:SetScript("OnDragStart", logFrame.StartMoving)
 logFrame:SetScript("OnDragStop", logFrame.StopMovingOrSizing)
 logFrame:SetBackdrop(FLAT_BACKDROP)
-logFrame:SetBackdropColor(0.043, 0.067, 0.125, 0.98)
+logFrame:SetBackdropColor(0.043, 0.067, 0.125, 1)
 logFrame:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
 logFrame:Hide()
 
@@ -856,9 +930,9 @@ local function CreateKpiCard(xOffset, w, labelTxt, accentR, accentG, accentB)
   return c
 end
 
-local kpiQtyCard   = CreateKpiCard(14,  158, "КУПЛЕНО (СДЕЛОК)", 0.0,  0.71, 0.85)
-local kpiSpentCard = CreateKpiCard(180, 162, "ВСЕГО ПОТРАЧЕНО",  0.92, 0.70, 0.03)
-local kpiAvgCard   = CreateKpiCard(350, 160, "СРЕДНЯЯ ЗА ШТУКУ", 0.06, 0.73, 0.51)
+local kpiQtyCard   = CreateKpiCard(14,  176, "КУПЛЕНО (СДЕЛОК)", 0.0,  0.71, 0.85)
+local kpiSpentCard = CreateKpiCard(198, 176, "ВСЕГО ПОТРАЧЕНО",  0.92, 0.70, 0.03)
+local kpiAvgCard   = CreateKpiCard(382, 176, "СРЕДНЯЯ ЗА ШТУКУ", 0.06, 0.73, 0.51)
 
 -- Grouped Per-Item Summary Section
 local sumSectionHdr = logFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -868,7 +942,7 @@ sumSectionHdr:SetText("|cfff59e0bСВОДКА ПО ПРЕДМЕТАМ|r")
 local sumBox = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
 sumBox:SetPoint("TOPLEFT", 14, -120)
 sumBox:SetPoint("TOPRIGHT", -14, -120)
-sumBox:SetHeight(76)
+sumBox:SetHeight(104)
 sumBox:SetBackdrop(FLAT_BACKDROP)
 sumBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
 sumBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
@@ -891,18 +965,18 @@ if sumScrollBar then
 end
 
 local sumContent = CreateFrame("Frame", nil, sumScroll)
-sumContent:SetSize(474, 68)
+sumContent:SetSize(522, 96)
 sumScroll:SetScrollChild(sumContent)
 local sumRows = {}
 
 -- Chronological Deal Log Header
 local detSectionHdr = logFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detSectionHdr:SetPoint("TOPLEFT", 16, -206)
+detSectionHdr:SetPoint("TOPLEFT", 16, -234)
 detSectionHdr:SetText("|cff94a3b8ДЕТАЛЬНЫЙ ЛОГ СДЕЛОК|r")
 
 local logColHdr = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
-logColHdr:SetPoint("TOPLEFT", 14, -222)
-logColHdr:SetPoint("TOPRIGHT", -14, -222)
+logColHdr:SetPoint("TOPLEFT", 14, -250)
+logColHdr:SetPoint("TOPRIGHT", -14, -250)
 logColHdr:SetHeight(22)
 logColHdr:SetBackdrop(FLAT_BACKDROP)
 logColHdr:SetBackdropColor(0.067, 0.094, 0.153, 1)
@@ -911,7 +985,7 @@ logColHdr:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
 local chTime = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 chTime:SetPoint("LEFT", 8, 0); chTime:SetWidth(52); chTime:SetJustifyH("LEFT"); chTime:SetText("|cff94a3b8Время|r")
 local chItem = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chItem:SetPoint("LEFT", chTime, "RIGHT", 6, 0); chItem:SetWidth(174); chItem:SetJustifyH("LEFT"); chItem:SetText("|cff94a3b8Предмет|r")
+chItem:SetPoint("LEFT", chTime, "RIGHT", 6, 0); chItem:SetWidth(218); chItem:SetJustifyH("LEFT"); chItem:SetText("|cff94a3b8Предмет|r")
 local chQty = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 chQty:SetPoint("LEFT", chItem, "RIGHT", 6, 0); chQty:SetWidth(44); chQty:SetJustifyH("RIGHT"); chQty:SetText("|cff94a3b8Шт|r")
 local chUnit = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -944,7 +1018,7 @@ if logScrollBar then
 end
 
 local logContent = CreateFrame("Frame", nil, logScroll)
-logContent:SetSize(474, 220)
+logContent:SetSize(522, 290)
 logScroll:SetScrollChild(logContent)
 local logRows = {}
 
@@ -983,7 +1057,7 @@ local function RenderLogFrame()
     local srow = sumRows[i]
     if not srow then
       srow = CreateFrame("Frame", nil, sumContent, "BackdropTemplate")
-      srow:SetSize(470, 22)
+      srow:SetSize(518, 22)
       srow:SetBackdrop(FLAT_BACKDROP)
       srow:SetBackdropColor(0.055, 0.078, 0.135, 1)
       srow:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.35)
@@ -993,7 +1067,7 @@ local function RenderLogFrame()
       srow.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
       srow.nm = srow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      srow.nm:SetPoint("LEFT", srow.ico, "RIGHT", 6, 0); srow.nm:SetWidth(160); srow.nm:SetJustifyH("LEFT"); srow.nm:SetWordWrap(false)
+      srow.nm:SetPoint("LEFT", srow.ico, "RIGHT", 6, 0); srow.nm:SetWidth(200); srow.nm:SetJustifyH("LEFT"); srow.nm:SetWordWrap(false)
 
       srow.q = srow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       srow.q:SetPoint("LEFT", srow.nm, "RIGHT", 6, 0); srow.q:SetWidth(68); srow.q:SetJustifyH("RIGHT")
@@ -1020,9 +1094,9 @@ local function RenderLogFrame()
     srow:Show()
     sy = sy + 24
   end
-  sumContent:SetHeight(math.max(68, sy))
+  sumContent:SetHeight(math.max(96, sy))
   if sumScrollBar then
-    if #itemOrder <= 2 then sumScrollBar:Hide() else sumScrollBar:Show() end
+    if #itemOrder <= 4 then sumScrollBar:Hide() else sumScrollBar:Show() end
   end
 
   for _, r in ipairs(logRows) do r:Hide() end
@@ -1036,7 +1110,7 @@ local function RenderLogFrame()
     local row = logRows[idx]
     if not row then
       row = CreateFrame("Frame", nil, logContent, "BackdropTemplate")
-      row:SetSize(470, rowH)
+      row:SetSize(518, rowH)
       row:SetBackdrop(FLAT_BACKDROP)
       row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
 
@@ -1048,7 +1122,7 @@ local function RenderLogFrame()
       row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
       row.nm = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.nm:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.nm:SetWidth(154); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
+      row.nm:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.nm:SetWidth(202); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
 
       row.q = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.q:SetPoint("LEFT", row.nm, "RIGHT", 6, 0); row.q:SetWidth(44); row.q:SetJustifyH("RIGHT"); row.q:SetWordWrap(false)
@@ -1087,16 +1161,17 @@ end
 local function RefreshSessionBar()
   local sb = state.sessionBuys
   local count = #(sb.history or {})
-  logBtn:SetLabel(string.format("Лог (%d)", count))
-  if sb.lastOutcome then
-    sessionOutcomeText:SetText(sb.lastOutcome)
+  if count > 0 then
+    logBtn.railText:SetText("|cff10b981Лог (" .. count .. ")|r")
+    if ForeverSniperDB.railExpanded then
+      logBadgeCount:Hide()
+    else
+      logBadgeCount:SetText("|cff10b981" .. count .. "|r")
+      logBadgeCount:Show()
+    end
   else
-    sessionOutcomeText:SetText("|cff64748bПокупок за сессию ещё не было|r")
-  end
-  if sb.totalQty > 0 then
-    sessionTotalsText:SetText(string.format("|cff94a3b8Сессия:|r |cffffffff%d шт|r | %s", sb.totalQty, FormatCoins(sb.totalCopper)))
-  else
-    sessionTotalsText:SetText("")
+    logBtn.railText:SetText("Лог (0)")
+    logBadgeCount:Hide()
   end
   if logFrame:IsShown() then
     RenderLogFrame()
@@ -1150,18 +1225,6 @@ local function ClearSessionHistory()
   RefreshSessionBar()
 end
 
-clearHistBarBtn:SetScript("OnClick", ClearSessionHistory)
-clearHistBarBtn:HookScript("OnEnter", function(self)
-  if GameTooltip then
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:SetText("Очистить историю покупок сессии")
-    GameTooltip:Show()
-  end
-end)
-clearHistBarBtn:HookScript("OnLeave", function()
-  if GameTooltip then GameTooltip:Hide() end
-end)
-
 logClearBtn:SetScript("OnClick", ClearSessionHistory)
 logBtn:SetScript("OnClick", function()
   if logFrame:IsShown() then
@@ -1172,14 +1235,19 @@ logBtn:SetScript("OnClick", function()
   end
 end)
 
-sessionBar:SetScript("OnEnter", function(self)
+logBtn:HookScript("OnEnter", function(self)
   if not GameTooltip then return end
-  GameTooltip:SetOwner(self, "ANCHOR_TOP")
-  GameTooltip:AddLine("|cfff59e0bИстория покупок (сессия)|r")
-  local hist = state.sessionBuys.history
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  local sb = state.sessionBuys
+  GameTooltip:AddLine("|cfff59e0bЛог покупок за сессию|r")
+  if sb.totalQty > 0 then
+    GameTooltip:AddDoubleLine("Всего куплено:", string.format("%d шт | %s", sb.totalQty, FormatCoinsPlain(sb.totalCopper)), 0.85, 0.90, 0.96, 0.06, 0.85, 0.55)
+  end
+  local hist = sb.history or {}
   if #hist == 0 then
     GameTooltip:AddLine("Пока нет завершённых покупок.", 0.65, 0.72, 0.82)
   else
+    local shown = 0
     for i = #hist, 1, -1 do
       local h = hist[i]
       GameTooltip:AddDoubleLine(
@@ -1187,29 +1255,18 @@ sessionBar:SetScript("OnEnter", function(self)
         FormatCoinsPlain(h.totalCost),
         0.9, 0.94, 0.98, 0.06, 0.85, 0.55
       )
+      shown = shown + 1
+      if shown >= 6 then break end
     end
   end
   GameTooltip:Show()
 end)
-sessionBar:SetScript("OnLeave", function()
+logBtn:HookScript("OnLeave", function()
   if GameTooltip then GameTooltip:Hide() end
 end)
 
 -- ============================================================================
--- Footer Action Bar
--- ============================================================================
-local scanBtn = CreateFlatButton("ForeverSniperScanBtn", f, 173, 28, "Старт скан")
-scanBtn:SetPoint("BOTTOMLEFT", 16, 14)
-
-local importBtn = CreateFlatButton(nil, f, 174, 28, "Импорт из дашборда")
-importBtn:SetPoint("LEFT", scanBtn, "RIGHT", 6, 0)
-
-local skipBtn = CreateFlatButton(nil, f, 173, 28, "Сброс лота")
-skipBtn:SetPoint("LEFT", importBtn, "RIGHT", 6, 0)
-skipBtn:SetFlatEnabled(false)
-
--- ============================================================================
--- Helpers & UI State Sync
+-- Helpers & UI State Sync (Execution controls live in Execution Dock above)
 -- ============================================================================
 local buyHotkeySuffixCache = ""
 local function RefreshBuyHotkeyCache()
@@ -1229,32 +1286,57 @@ local function GetBuyHotkeySuffix()
   return buyHotkeySuffixCache
 end
 
+local function ApplyRailState()
+  local expanded = not not ForeverSniperDB.railExpanded
+  toolRail:SetWidth(expanded and 134 or 36)
+  f:SetWidth(expanded and 670 or 572)
+  railToggleBtn:SetLabel(expanded and "<< Свернуть" or ">>")
+  for _, btn in ipairs(railButtons) do
+    if expanded then
+      btn.railText:Show()
+    else
+      btn.railText:Hide()
+    end
+  end
+  RefreshSessionBar()
+end
+
+railToggleBtn:SetScript("OnClick", function()
+  ForeverSniperDB.railExpanded = not ForeverSniperDB.railExpanded
+  ApplyRailState()
+end)
+
 local function ApplyMiniMode()
   local isMini = not not ForeverSniperDB.miniMode
+  ApplyRailState()
   if isMini then
     cfgCard:Hide()
     wlHeader:Hide()
+    railDiv:Hide()
+    importBtn:Hide()
     presetsBtn:Hide()
     trackBtn:Hide()
     wlBox:Hide()
     dealCard:ClearAllPoints()
-    dealCard:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -62)
-    dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -16, -62)
-    f:SetHeight(274)
-    miniBtn:SetLabel("Полн.")
-    miniBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.75 }, { 0.85, 1, 0.94 })
+    dealCard:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, 0)
+    dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -60)
+    f:SetHeight(244)
+    miniBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.8 }, { 0.85, 1, 0.94 })
+    miniBtn.railText:SetText("|cff10b981Полный вид|r")
   else
     cfgCard:Show()
     wlHeader:Show()
+    railDiv:Show()
+    importBtn:Show()
     presetsBtn:Show()
     trackBtn:Show()
     wlBox:Show()
     dealCard:ClearAllPoints()
     dealCard:SetPoint("TOPLEFT", wlBox, "BOTTOMLEFT", 0, -10)
     dealCard:SetPoint("TOPRIGHT", wlBox, "BOTTOMRIGHT", 0, -10)
-    f:SetHeight(616)
-    miniBtn:SetLabel("Мини")
-    miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.78, 0.84, 0.94 })
+    f:SetHeight(585)
+    miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.85, 0.90, 0.96 })
+    miniBtn.railText:SetText("Мини-режим")
   end
 end
 
@@ -1274,7 +1356,7 @@ local function RefreshBuyButtonText()
 
   local cap = GetQtyCap(deal.itemID)
   local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
-  local chosenQty = math.max(1, math.min(effectiveMax, tonumber(qtyInput:GetText()) or effectiveMax))
+  local chosenQty = math.max(1, effectiveMax)
   local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
   local hk = GetBuyHotkeySuffix()
 
@@ -1330,13 +1412,18 @@ local function RenderWatchlist()
     row:Hide()
   end
 
+  local allItems = state.allItems or {}
+  local needScroll = (#allItems > 6)
+  local rowW = needScroll and 480 or 490
+  wlContent:SetWidth(rowW)
+
   local rowH = 26
   local y = 0
-  for i, itemID in ipairs(state.allItems or {}) do
+  for i, itemID in ipairs(allItems) do
     local row = wlRows[i]
     if not row then
       row = CreateFrame("Button", nil, wlContent, "BackdropTemplate")
-      row:SetSize(498, rowH)
+      row:SetSize(rowW, rowH)
       row:SetBackdrop(FLAT_BACKDROP)
 
       row.bar = row:CreateTexture(nil, "ARTWORK")
@@ -1349,10 +1436,10 @@ local function RenderWatchlist()
       row.eye:SetPoint("LEFT", 7, 0)
       row.eye:SetBackdrop(FLAT_BACKDROP)
       row.eye.tex = row.eye:CreateTexture(nil, "ARTWORK")
-      row.eye.tex:SetPoint("TOPLEFT", 2, -2)
-      row.eye.tex:SetPoint("BOTTOMRIGHT", -2, 2)
-      row.eye.tex:SetTexture("Interface\\AddOns\\ForeverSniper\\minimap_icon.tga")
-      row.eye.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      row.eye.tex:SetPoint("TOPLEFT", 1, -1)
+      row.eye.tex:SetPoint("BOTTOMRIGHT", -1, 1)
+      row.eye.tex:SetTexture("Interface\\AddOns\\ForeverSniper\\eye_monocle.tga")
+      row.eye.tex:SetTexCoord(0, 1, 0, 1)
       row.eye:SetScript("OnEnter", function(self)
         local id = self.itemID
         local on = id and IsItemTracked(id)
@@ -1375,27 +1462,27 @@ local function RenderWatchlist()
 
       row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.name:SetPoint("LEFT", row.ico, "RIGHT", 6, 0)
-      row.name:SetWidth(134)
+      row.name:SetWidth(132)
       row.name:SetJustifyH("LEFT")
       row.name:SetWordWrap(false)
 
       row.price = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.price:SetPoint("LEFT", row.name, "RIGHT", 4, 0)
-      row.price:SetWidth(88)
+      row.price:SetWidth(84)
       row.price:SetJustifyH("LEFT")
       row.price:SetWordWrap(false)
 
       row.live = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.live:SetPoint("LEFT", row.price, "RIGHT", 4, 0)
-      row.live:SetWidth(116)
       row.live:SetJustifyH("LEFT")
       row.live:SetWordWrap(false)
 
       row.cap = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.cap:SetPoint("LEFT", row.live, "RIGHT", 4, 0)
+      row.cap:SetPoint("RIGHT", -28, 0)
       row.cap:SetWidth(52)
       row.cap:SetJustifyH("RIGHT")
       row.cap:SetWordWrap(false)
+      row.live:SetPoint("RIGHT", row.cap, "LEFT", -6, 0)
 
       row.del = CreateFlatButton(nil, row, 20, 20, "x")
       row.del:SetPoint("RIGHT", -4, 0)
@@ -1412,6 +1499,7 @@ local function RenderWatchlist()
 
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", 0, -y)
+    row:SetWidth(rowW)
     row.eye.itemID = itemID
     if isTracked then
       row.eye:SetBackdropColor(0.04, 0.16, 0.14, 1)
@@ -1534,10 +1622,10 @@ UpdateStatus = function()
 
   if ForeverSniperDB.autoScan then
     scanBtn:SetLabel("Пауза")
-    scanBtn:SetColors({ 0.34, 0.17, 0.06, 1 }, { 0.48, 0.24, 0.08, 1 }, { 0.96, 0.62, 0.04, 0.8 }, { 1, 0.94, 0.80 })
+    scanBtn:SetColors({ 0.30, 0.16, 0.06, 1 }, { 0.44, 0.22, 0.08, 1 }, { 0.96, 0.62, 0.04, 0.75 }, { 1, 0.94, 0.80 })
   else
     scanBtn:SetLabel("Старт скан")
-    scanBtn:SetColors({ 0.03, 0.28, 0.21, 1 }, { 0.05, 0.40, 0.30, 1 }, { 0.06, 0.73, 0.51, 0.75 }, { 0.88, 1, 0.95 })
+    scanBtn:SetColors({ 0.08, 0.13, 0.21, 1 }, { 0.12, 0.19, 0.30, 1 }, { 0.06, 0.73, 0.51, 0.55 }, { 0.86, 0.96, 0.92 })
   end
 
   local sel = ForeverSniperDB.selectedID
@@ -1547,25 +1635,21 @@ UpdateStatus = function()
     iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
     targetNameText:SetText(nm)
     targetNameText:SetTextColor(r, g, b)
-    local cap = GetQtyCap(sel)
-    local capText = cap > 0 and string.format("  |  |cff94a3b8Макс. покупка:|r |cfff59e0b%d шт|r", cap) or ""
-    targetSubText:SetText(string.format("|cff64748bID %d  |  Лимит:|r %s%s", sel, FormatCoins(ForeverSniperDB.watchlist[sel]), capText))
-    queueCounter:SetText(string.format("|cffcbd5e1%d / %d|r", state.idx, #state.queue))
+    targetSubText:SetText(string.format("|cff64748bID %d  |  Перетащите предмет из сумки на иконку|r", sel))
   else
     itemIcon:SetTexture(134400)
     iconFrame:SetBackdropBorderColor(0.25, 0.33, 0.45, 1)
     targetNameText:SetText("Нет выбранного предмета")
     targetNameText:SetTextColor(0.65, 0.72, 0.82)
     targetSubText:SetText("|cff64748bЗадайте ID и цену ниже или нажмите Импорт|r")
-    queueCounter:SetText("|cff64748b0 / 0|r")
   end
 
   if ForeverSniperDB.activePreset and ForeverSniperDB.presets and ForeverSniperDB.presets[ForeverSniperDB.activePreset] then
-    wlHeader:SetText(string.format("|cff10b981ШАБЛОН: %s (%d)|r", ForeverSniperDB.activePreset, #state.queue))
-    presetsBtn:SetLabel("Шаблон: ВКЛ")
+    wlHeader:SetText(string.format("|cff10b981ШАБЛОН: %s|r", ForeverSniperDB.activePreset))
+    presetsBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.85 }, { 0.85, 1, 0.94 })
   else
-    wlHeader:SetText(string.format("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ (%d)|r", #state.queue))
-    presetsBtn:SetLabel("Пресеты")
+    wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
+    presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.96, 0.85, 0.55 })
   end
   RenderWatchlist()
 
@@ -1576,7 +1660,6 @@ end
 
 ClearPendingDeal = function(keepLowestMsg)
   state.pendingDeal = nil
-  qtyInput:SetText("0")
   skipBtn:SetFlatEnabled(false)
   dealStripe:SetColorTexture(0.25, 0.33, 0.45, 0.65)
   dealCard:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
@@ -1600,10 +1683,6 @@ local function SetPendingDeal(deal)
   itemName = deal.name or itemName
 
   local cap = GetQtyCap(deal.itemID)
-  local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
-  if not qtyInput:HasFocus() then
-    qtyInput:SetText(tostring(effectiveMax))
-  end
 
   local pct = 0
   if deal.maxPrice and deal.maxPrice > 0 and deal.unitPrice and deal.unitPrice <= deal.maxPrice then
@@ -1630,23 +1709,6 @@ local function SetPendingDeal(deal)
   end
 end
 
-qtyInput:SetScript("OnTextChanged", function()
-  if state.pendingDeal then
-    RefreshBuyButtonText()
-  end
-end)
-
-maxQtyBtn:SetScript("OnClick", function()
-  if state.pendingDeal and (state.pendingDeal.maxAvailQty or state.pendingDeal.qty) then
-    local cap = GetQtyCap(state.pendingDeal.itemID)
-    local avail = state.pendingDeal.maxAvailQty or state.pendingDeal.qty
-    local effectiveMax = (cap > 0) and math.min(avail, cap) or avail
-    qtyInput:SetText(tostring(effectiveMax))
-    qtyInput:ClearFocus()
-    RefreshBuyButtonText()
-  end
-end)
-
 -- Fast buy flow (shared between mouse click and direct keybinding)
 local function ExecuteBuyAction(mouseButton)
   local deal = state.pendingDeal
@@ -1659,7 +1721,7 @@ local function ExecuteBuyAction(mouseButton)
 
   local cap = GetQtyCap(deal.itemID)
   local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
-  local chosenQty = math.max(1, math.min(effectiveMax, tonumber(qtyInput:GetText()) or effectiveMax))
+  local chosenQty = math.max(1, effectiveMax)
   local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
 
   if not deal.isCommodity then
@@ -1727,24 +1789,6 @@ end)
 
 skipBtn:SetScript("OnClick", function()
   ClearPendingDeal()
-end)
-
-prevTargetBtn:SetScript("OnClick", function()
-  if #state.queue == 0 then return end
-  state.idx = ((state.idx - 2) % #state.queue) + 1
-  ForeverSniperDB.selectedID = state.queue[state.idx]
-  SyncInputsFromSelected()
-  ClearPendingDeal()
-  UpdateStatus()
-end)
-
-nextTargetBtn:SetScript("OnClick", function()
-  if #state.queue == 0 then return end
-  state.idx = (state.idx % #state.queue) + 1
-  ForeverSniperDB.selectedID = state.queue[state.idx]
-  SyncInputsFromSelected()
-  ClearPendingDeal()
-  UpdateStatus()
 end)
 
 local function ApplyManualTarget()
@@ -1855,7 +1899,6 @@ local function SendTargetQuery()
     iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
     targetNameText:SetText(nm)
     targetNameText:SetTextColor(r, g, b)
-    queueCounter:SetText(string.format("%d / %d", state.idx, #state.queue))
   end
 end
 
