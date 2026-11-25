@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
+from . import __version__
 from .analytics import build_transmute_report
 from .config import DEFAULT_AH_FEE_RATE, format_copper
 from .db import SEED_ITEMS
@@ -149,8 +150,9 @@ def _evaluate_trade_decision(
     avail: int,
     sample_size: int,
     history_pts: list[list] | None = None,
+    reagent_batches: int | None = None,
 ) -> tuple[str, int, str]:
-    """Compute `(signal, score_0_100, reason)` using liquidity, margin, book stability, and velocity."""
+    """Compute `(signal, score_0_100, reason)` using liquidity, margin, book stability, velocity, and risk guards."""
     liq = _classify_liquidity(avail, sample_size, current_min)
     reasons: list[str] = []
 
@@ -169,23 +171,27 @@ def _evaluate_trade_decision(
 
     # 2. Order-book stability: median / p25 (0..15)
     stab_score = 0
-    if p25 and median and p25 > 0:
-        ratio = median / p25
-        if ratio <= 1.4:
+    spread_ratio = (median / p25) if (p25 and median and p25 > 0) else None
+    if spread_ratio is not None:
+        if spread_ratio <= 1.4:
             stab_score = 15
             reasons.append("плотный стакан")
-        elif ratio <= 2.0:
+        elif spread_ratio <= 2.0:
             stab_score = 8
         else:
             reasons.append("широкий разброс цен")
 
-    # 3. Cross-snapshot demand velocity & oversupply / dumping check (-20..+15)
+    # 3. Cross-snapshot demand velocity, dumping & 24h spike guard (-20..+15)
     vel_score = 0
     is_dumping = False
+    is_price_spike = False
+    hist_med_min: int | None = None
     if history_pts and len(history_pts) >= 2:
         first_min, first_avail = history_pts[0][1], history_pts[0][4]
         prev_min, prev_avail = history_pts[-2][1], history_pts[-2][4]
         cur_min_h, cur_avail_h = history_pts[-1][1], history_pts[-1][4]
+        sorted_mins = sorted(int(pt[1]) for pt in history_pts)
+        hist_med_min = sorted_mins[len(sorted_mins) // 2]
 
         # Price dumping check: >=8% drop from earliest snapshot with high supply
         if first_min > 0 and cur_min_h < first_min * 0.92 and cur_avail_h >= 20:
@@ -201,11 +207,28 @@ def _evaluate_trade_decision(
         elif cur_avail_h != prev_avail:
             vel_score += 5
 
-    # 3b. Non-stackable 1-unit-per-lot competition penalty (e.g. 64 bags fighting for 1st slot)
+        if (
+            len(history_pts) >= 4
+            and current_min is not None
+            and hist_med_min > 0
+            and current_min > hist_med_min * 1.40
+        ):
+            is_price_spike = True
+            vel_score -= 15
+            reasons.append("пик цены vs 24ч медианы")
+
+    # 3b. Non-stackable 1-unit-per-lot competition vs stackable commodity velocity
     is_crowded_singles = sample_size >= 30 and avail == sample_size
+    is_single_unit_gear = sample_size >= 10 and avail == sample_size
     if is_crowded_singles:
         vel_score -= 15
         reasons.append(f"конкуренция {sample_size} лотов по 1 шт.")
+    elif is_single_unit_gear:
+        vel_score -= 8
+        reasons.append(f"единичные лоты ({sample_size} шт.)")
+    elif sample_size >= 8 and avail >= sample_size * 3:
+        vel_score += 5
+        reasons.append("высокая оборачиваемость")
 
     # Low liquidity guard: never recommend heavy crafting on thin books
     if liq == "Низкая":
@@ -215,12 +238,29 @@ def _evaluate_trade_decision(
             return "УБЫТОЧНО", 0, "отрицательная маржа и низкая ликвидность"
         return "—", 0, "нет крафта"
 
-    # 4. Snipe / Arbitrage check (requires >=25s net flip profit & real depth)
-    if current_min is not None and p25 is not None and p25 > 0 and avail >= 10 and sample_size >= 5:
+    # 4. Snipe / Arbitrage check (deep tight book, non-gear, validated against 24h median)
+    if (
+        current_min is not None
+        and current_min > 0
+        and p25 is not None
+        and p25 > 0
+        and avail >= 20
+        and sample_size >= 8
+        and not is_single_unit_gear
+        and (spread_ratio is None or spread_ratio <= 1.5)
+    ):
         flip_profit = int(p25 * 0.95) - current_min
-        if (p25 - current_min) / p25 >= 0.15 and flip_profit >= 2_500:
-            score = min(100, 35 + liq_score + stab_score + vel_score)
-            return "СКУПКА", score, f"дисконт >=15% к P25 (+{format_copper(flip_profit)}/шт.); " + ", ".join(reasons)
+        disc_vs_p25 = (p25 - current_min) / p25
+        flip_roi = (flip_profit / current_min) * 100.0
+        not_overpriced_hist = (
+            hist_med_min is None
+            or len(history_pts or []) < 3
+            or current_min <= int(hist_med_min * 1.02)
+        )
+        if disc_vs_p25 >= 0.20 and flip_profit >= 5_000 and not_overpriced_hist:
+            flip_pts = min(20, int(flip_profit / 2_500)) + min(15, int(flip_roi / 4))
+            score = max(0, min(100, liq_score + stab_score + max(0, vel_score) + flip_pts))
+            return "СКУПКА", score, f"дисконт {int(disc_vs_p25 * 100)}% к P25 (+{format_copper(flip_profit)}/шт.); " + ", ".join(reasons)
 
     # 5. Margin & Absolute Profit (0..35)
     if craft_profit is not None and craft_cost is not None and craft_cost > 0:
@@ -236,6 +276,10 @@ def _evaluate_trade_decision(
         roi_pts = min(15, int((roi_pct or 0) / 4))     # 60% ROI -> 15 pts
         total_score = max(0, min(100, liq_score + stab_score + vel_score + abs_pts + roi_pts))
 
+        if reagent_batches is not None and reagent_batches < 2:
+            return "ОСТОРОЖНО", min(52, total_score), f"мало реагентов на АХ (хватит на {reagent_batches} шт.); " + ", ".join(reasons)
+        if is_price_spike and hist_med_min is not None and int(hist_med_min * 0.95) <= craft_cost:
+            return "ОСТОРОЖНО", min(55, total_score), "; ".join(reasons)
         if is_dumping or is_crowded_singles:
             return "ОСТОРОЖНО", min(59, total_score), "; ".join(reasons)
         if liq == "Огранич.":
@@ -394,10 +438,11 @@ def build_dashboard_data(
     if latest_snap is not None:
         snap_id = int(latest_snap["snapshot_id"])
         all_obs = conn.execute(
-            "SELECT item_id, min_unit_price_copper FROM auction_observations WHERE snapshot_id = ?",
+            "SELECT item_id, min_unit_price_copper, total_available FROM auction_observations WHERE snapshot_id = ?",
             (snap_id,),
         ).fetchall()
         price_map = {int(r["item_id"]): int(r["min_unit_price_copper"]) for r in all_obs}
+        avail_map = {int(r["item_id"]): int(r["total_available"]) for r in all_obs}
 
         seed_ids = [item.item_id for item in SEED_ITEMS]
         seed_set = set(seed_ids)
@@ -413,7 +458,6 @@ def build_dashboard_data(
                OR i.item_id IN ({})
                OR i.item_id IN (
                    SELECT output_item_id FROM craft_recipes
-                   WHERE profession_ru IN ('Алхимия', 'Портняжное дело')
                )
             ORDER BY i.item_id ASC
             """.format(",".join("?" for _ in seed_ids)),
@@ -428,7 +472,10 @@ def build_dashboard_data(
             oid = int(cr["output_item_id"])
             if oid not in db_recipes:
                 parsed_reags = tuple((int(x[0]), int(x[1])) for x in json.loads(cr["reagents_json"]))
-                db_recipes[oid] = (parsed_reags, int(cr["output_qty"]), str(cr["profession_ru"]))
+                raw_prof = str(cr["profession_ru"])
+                if raw_prof == "Profession 2933":
+                    raw_prof = "Горное дело"
+                db_recipes[oid] = (parsed_reags, int(cr["output_qty"]), raw_prof)
 
         all_item_names = {
             int(r["item_id"]): str(r["name_ru"])
@@ -481,6 +528,9 @@ def build_dashboard_data(
 
             is_craftable = active_reags is not None
             craft_cost = _compute_craft_cost(active_reags, price_map, out_qty) if is_craftable else None
+            reagent_batches: int | None = None
+            if is_craftable and active_reags:
+                reagent_batches = min(avail_map.get(rid, 0) // max(1, rqty) for rid, rqty in active_reags)
             craft_profit: int | None = None
             roi_pct: float | None = None
             if craft_cost is not None and cur_min is not None:
@@ -499,6 +549,7 @@ def build_dashboard_data(
                 avail=avail_val,
                 sample_size=sample_val,
                 history_pts=history_map.get(iid),
+                reagent_batches=reagent_batches,
             )
             liq_label = _classify_liquidity(avail_val, sample_val, cur_min)
 
@@ -508,10 +559,10 @@ def build_dashboard_data(
 
             if prof_ru == "Первая помощь":
                 group_label = "Первая помощь"
+            elif prof_ru and prof_ru != "other":
+                group_label = prof_ru
             elif iid in seed_set:
                 group_label = _classify_item_group(iid, str(r["category"]))
-            elif prof_ru in {"Алхимия", "Портняжное дело"}:
-                group_label = prof_ru
             else:
                 group_label = "Весь рынок"
 
@@ -554,6 +605,23 @@ def build_dashboard_data(
     }
 
 
+def _format_copper_html(copper: int | None) -> str:
+    """Format integer copper as inline HTML with WoW gold/silver/copper coin icons."""
+    if copper is None:
+        return "—"
+    sign = "-" if copper < 0 else ""
+    a = abs(int(copper))
+    g, rem = divmod(a, 10_000)
+    s, c = divmod(rem, 100)
+    parts: list[str] = []
+    if g > 0:
+        parts.append(f'{g}<span class="wt-coin wt-coin-g" title="з"></span>')
+    if s > 0 or g > 0:
+        parts.append(f'{s}<span class="wt-coin wt-coin-s" title="с"></span>')
+    parts.append(f'{c}<span class="wt-coin wt-coin-c" title="м"></span>')
+    return f'<span class="coin-price">{sign}{"".join(parts)}</span>'
+
+
 def render_dashboard_html(data: dict) -> str:
     """Render a self-contained dark-mode HTML dashboard with current prices & craft costs."""
     snap = data["snapshot"] or {}
@@ -567,9 +635,9 @@ def render_dashboard_html(data: dict) -> str:
             f"<tr>"
             f"<td>{html.escape(t.name_ru)}</td>"
             f"<td>{t.cooldown_hours}h</td>"
-            f"<td>{html.escape(format_copper(t.input_cost_copper))}</td>"
-            f"<td>{html.escape(format_copper(t.output_unit_price_copper))}</td>"
-            f"<td class='{profit_cls}'>{html.escape(format_copper(t.net_profit_copper))}</td>"
+            f"<td>{_format_copper_html(t.input_cost_copper)}</td>"
+            f"<td>{_format_copper_html(t.output_unit_price_copper)}</td>"
+            f"<td class='{profit_cls}'>{_format_copper_html(t.net_profit_copper)}</td>"
             f"<td>{t.output_total_available if t.output_total_available is not None else '—'}</td>"
             f"<td>{html.escape(t.status_note)}</td>"
             f"</tr>"
@@ -615,6 +683,46 @@ def render_dashboard_html(data: dict) -> str:
     profitable_crafts = sum(1 for it in data["items"] if (it.craft_profit_copper or 0) > 0 and it.liquidity_label != "Низкая")
     action_signals = sum(1 for it in data["items"] if it.trade_signal in {"КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"})
 
+    prof_order = [
+        "Алхимия",
+        "Портняжное дело",
+        "Кузнечное дело",
+        "Кожевничество",
+        "Инженерное дело",
+        "Наложение чар",
+        "Кулинария",
+        "Первая помощь",
+        "Горное дело",
+        "Травничество",
+    ]
+    prof_counts: dict[str, int] = {}
+    for it in data["items"]:
+        if it.group_label not in {"Весь рынок", "Трансмутации и реагенты"}:
+            prof_counts[it.group_label] = prof_counts.get(it.group_label, 0) + 1
+    ordered_profs = [p for p in prof_order if p in prof_counts or p in {"Алхимия", "Портняжное дело", "Первая помощь"}] + sorted(
+        p for p in prof_counts if p not in prof_order
+    )
+    prof_icons = {
+        "Алхимия": '<path d="M9 3h6"/><path d="M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/>',
+        "Портняжное дело": '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/>',
+        "Первая помощь": '<path d="M12 5v14"/><path d="M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/>',
+        "Кузнечное дело": '<path d="m15 12-8.5 8.5c-.83.83-2.17.83-3 0 0 0 0 0 0 0a2.12 2.12 0 0 1 0-3L12 9"/><path d="M17.64 15 22 10.64"/><path d="m20.91 11.7-1.25-1.25c-.6-.6-.93-1.4-.93-2.25v-.86L16.01 4.6a5.56 5.56 0 0 0-3.94-1.64H9l.92.82A6.18 6.18 0 0 1 12 8.4v1.56l2 2h2.47l2.26 1.91"/>',
+        "Кожевничество": '<path d="M12 3c4 0 7 3 7 7 0 5-3 11-7 11S5 15 5 10c0-4 3-7 7-7z"/>',
+        "Инженерное дело": '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1z"/>',
+        "Наложение чар": '<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>',
+        "Кулинария": '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>',
+        "Горное дело": '<path d="m14 13-8.5 8.5a2.12 2.12 0 1 1-3-3L11 10"/><path d="m16 16 6-6"/><path d="m8 8 6-6"/><path d="m9 7 8 8"/>',
+        "Травничество": '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>',
+    }
+    prof_nav_html = "".join(
+        f'<button class="nav-btn" data-view="{html.escape(pname)}">'
+        f'<span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
+        f'{prof_icons.get(pname, "<circle cx=12 cy=12 r=4/>")}</svg> {html.escape(pname)}</span>'
+        f'<span class="nav-count">{prof_counts.get(pname, 0)}</span>'
+        f'</button>'
+        for pname in ordered_profs
+    )
+
     def _top_signals_for_prof(prof_name: str, limit: int = 6) -> list[DashboardItemRow]:
         candidates = [
             it
@@ -636,9 +744,9 @@ def render_dashboard_html(data: dict) -> str:
             out.append(
                 f"<div class='sig-row'>"
                 f"<div><span class='badge {sig_cls}'>{html.escape(it.trade_signal)}</span> <b>{html.escape(it.name_ru)}</b> <span class='meta'>#{it.item_id} · ост. {it.total_available}</span></div>"
-                f"<div class='pos'>+{html.escape(format_copper(it.craft_profit_copper))}{roi_txt}</div>"
+                f"<div class='pos'>+{_format_copper_html(it.craft_profit_copper)}{roi_txt}</div>"
                 f"</div>"
-                f"<div class='sig-sub'>АХ: {html.escape(format_copper(it.current_min_copper))} · Крафт: {html.escape(format_copper(it.craft_cost_copper))} · {html.escape(it.reagents_text)}</div>"
+                f"<div class='sig-sub'>АХ: {_format_copper_html(it.current_min_copper)} · Крафт: {_format_copper_html(it.craft_cost_copper)} · {html.escape(it.reagents_text)}</div>"
             )
         return "".join(out)
 
@@ -760,10 +868,11 @@ def render_dashboard_html(data: dict) -> str:
     padding: 18px 14px;
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 14px;
     position: sticky;
     top: 0;
     height: 100vh;
+    overflow-y: auto;
   }}
   .brand {{ display: flex; align-items: center; gap: 10px; padding: 4px 6px; }}
   .brand-mark {{
@@ -773,12 +882,16 @@ def render_dashboard_html(data: dict) -> str:
   }}
   .brand-title {{ font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }}
   .brand-sub {{ font-size: 11px; color: var(--muted); }}
-  .nav-group {{ display: flex; flex-direction: column; gap: 4px; }}
-  .nav-label {{ font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 6px 10px 4px; font-weight: 600; }}
+  .nav-group {{ display: flex; flex-direction: column; gap: 3px; }}
+  .nav-label {{ font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 6px 10px 4px; font-weight: 600; list-style: none; }}
+  summary.nav-label {{ cursor: pointer; display: flex; align-items: center; justify-content: space-between; user-select: none; }}
+  summary.nav-label::-webkit-details-marker {{ display: none; }}
+  details.nav-group[open] summary.nav-label::after {{ content: "▾"; font-size: 11px; }}
+  details.nav-group:not([open]) summary.nav-label::after {{ content: "▸"; font-size: 11px; }}
   .nav-btn {{
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     width: 100%; background: transparent; border: 1px solid transparent; border-radius: 8px;
-    color: var(--muted); padding: 9px 10px; font-size: 13px; font-weight: 500;
+    color: var(--muted); padding: 7px 10px; font-size: 13px; font-weight: 500;
     cursor: pointer; font-family: inherit; text-align: left; transition: all .14s ease;
   }}
   .nav-btn:hover {{ background: rgba(255,255,255,0.03); color: var(--text); }}
@@ -877,10 +990,11 @@ def render_dashboard_html(data: dict) -> str:
   .wt-line-g {{ color: #1EFF00; }}
   .wt-line-y {{ color: #FFD100; }}
   .wt-split {{ display: flex; justify-content: space-between; gap: 18px; color: #FFFFFF; }}
-  .wt-coin {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 4px 0 2px; vertical-align: middle; }}
-  .wt-coin-g {{ background: #FACC15; }}
-  .wt-coin-s {{ background: #CBD5E1; }}
-  .wt-coin-c {{ background: #D97706; }}
+  .coin-price {{ white-space: nowrap; display: inline-flex; align-items: center; }}
+  .wt-coin {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 5px 0 2px; vertical-align: -1px; box-shadow: inset 0 -1px 2px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.35); flex-shrink: 0; }}
+  .wt-coin-g {{ background: radial-gradient(circle at 35% 30%, #FEF08A, #EAB308 65%, #A16207); }}
+  .wt-coin-s {{ background: radial-gradient(circle at 35% 30%, #F8FAFC, #CBD5E1 65%, #64748B); }}
+  .wt-coin-c {{ background: radial-gradient(circle at 35% 30%, #FDBA74, #D97706 65%, #7C2D12); }}
   #toast {{ position: fixed; bottom: 20px; right: 24px; background: var(--card); border: 1px solid var(--pos); color: var(--text); padding: 9px 14px; border-radius: 10px; font-size: 12.5px; opacity: 0; pointer-events: none; transition: opacity .2s ease; box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 50; }}
   #toast.show {{ opacity: 1; }}
   .hidden {{ display: none !important; }}
@@ -901,7 +1015,7 @@ def render_dashboard_html(data: dict) -> str:
       <div class="brand-mark">FA</div>
       <div>
         <div class="brand-title">Forever Observatory</div>
-        <div class="brand-sub">EU Орда · House {html.escape(str(house_id))}</div>
+        <div class="brand-sub">EU Орда · House {html.escape(str(house_id))} · v{html.escape(__version__)}</div>
       </div>
     </div>
 
@@ -914,18 +1028,6 @@ def render_dashboard_html(data: dict) -> str:
         <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Сигналы и рейтинг</span>
         <span class="nav-count" style="color:var(--pos);">{action_signals}</span>
       </button>
-      <button class="nav-btn" data-view="Алхимия">
-        <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3h6"/><path d="M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/></svg> Алхимия</span>
-        <span class="nav-count">{sum(1 for it in data['items'] if it.group_label == 'Алхимия')}</span>
-      </button>
-      <button class="nav-btn" data-view="Портняжное дело">
-        <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/></svg> Портняжное дело</span>
-        <span class="nav-count">{sum(1 for it in data['items'] if it.group_label == 'Портняжное дело')}</span>
-      </button>
-      <button class="nav-btn" data-view="Первая помощь">
-        <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg> Первая помощь</span>
-        <span class="nav-count">{sum(1 for it in data['items'] if it.group_label == 'Первая помощь')}</span>
-      </button>
       <button class="nav-btn" data-view="transmutes">
         <span class="nav-left"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg> Трансмутации (КД)</span>
         <span class="nav-count">{len(data['transmutes'])}</span>
@@ -935,6 +1037,11 @@ def render_dashboard_html(data: dict) -> str:
         <span class="nav-count">{len(data['items'])}</span>
       </button>
     </div>
+
+    <details class="nav-group" open>
+      <summary class="nav-label">Профессии ({len(ordered_profs)})</summary>
+      {prof_nav_html}
+    </details>
 
     <div class="rail-footer">
       <div style="color:var(--text); font-weight:600; margin-bottom:4px;">Телеметрия АХ</div>
@@ -1132,6 +1239,20 @@ function fmtCopper(c) {{
   return sign + (g ? g + "g " : "") + ((g || s) ? s + "s " : "") + cp + "c";
 }}
 
+function fmtCoinsHtml(copper) {{
+  if (copper === null || copper === undefined) return "—";
+  const sign = copper < 0 ? "-" : "";
+  const a = Math.abs(Math.round(copper));
+  const g = Math.floor(a / 10000);
+  const s = Math.floor((a % 10000) / 100);
+  const c = a % 100;
+  const parts = [];
+  if (g > 0) parts.push(`${{g}}<span class="wt-coin wt-coin-g"></span>`);
+  if (s > 0 || g > 0) parts.push(`${{s}}<span class="wt-coin wt-coin-s"></span>`);
+  parts.push(`${{c}}<span class="wt-coin wt-coin-c"></span>`);
+  return `<span class="coin-price">${{sign}}${{parts.join("")}}</span>`;
+}}
+
 function smoothPath(points) {{
   if (points.length === 1) return `M ${{points[0][0]}} ${{points[0][1]}}`;
   let d = `M ${{points[0][0]}} ${{points[0][1]}}`;
@@ -1149,19 +1270,19 @@ function drawDynamicsChart(item) {{
   document.getElementById("inspName").textContent = item.name_ru;
   document.getElementById("inspReason").textContent = `Оценка: ${{item.score}}/100 · ${{item.reason}}`;
   document.getElementById("inspReagents").textContent = `Реагенты: ${{item.reagents}}`;
-  document.getElementById("inspMin").textContent = item.current_min_fmt;
-  document.getElementById("inspCost").textContent = item.craft_cost_fmt;
+  document.getElementById("inspMin").innerHTML = fmtCoinsHtml(item.current_min);
+  document.getElementById("inspCost").innerHTML = fmtCoinsHtml(item.craft_cost);
   const pEl = document.getElementById("inspProfit");
-  pEl.textContent = `${{item.craft_profit_fmt}} (${{item.roi_fmt}})`;
+  pEl.innerHTML = `${{fmtCoinsHtml(item.craft_profit)}} (${{item.roi_fmt}})`;
   pEl.className = "insp-v " + (item.craft_profit > 0 ? "pos" : item.craft_profit < 0 ? "neg" : "");
   document.getElementById("inspLiq").textContent = `${{item.liquidity}} (${{item.avail}} шт / ${{item.samples}} лот.)`;
 
   const legend = document.getElementById("chartLegend");
   const last = pts[pts.length - 1];
   legend.innerHTML = last ? `
-    <span><span style="color:#00B4D8;">●</span> Мин: <b class="mono" style="color:var(--text);">${{fmtCopper(last[1])}}</b></span>
-    <span><span style="color:#2AB86F;">●</span> P25: <b class="mono" style="color:var(--text);">${{fmtCopper(last[2])}}</b></span>
-    <span><span style="color:#8B5CF6;">●</span> Мед: <b class="mono" style="color:var(--text);">${{fmtCopper(last[3])}}</b></span>
+    <span><span style="color:#00B4D8;">●</span> Мин: <b class="mono" style="color:var(--text);">${{fmtCoinsHtml(last[1])}}</b></span>
+    <span><span style="color:#2AB86F;">●</span> P25: <b class="mono" style="color:var(--text);">${{fmtCoinsHtml(last[2])}}</b></span>
+    <span><span style="color:#8B5CF6;">●</span> Мед: <b class="mono" style="color:var(--text);">${{fmtCoinsHtml(last[3])}}</b></span>
     <span><span style="color:#38BDF8;">▮</span> Ост: <b class="mono" style="color:var(--text);">${{last[4]}}</b></span>
   ` : "";
 
@@ -1181,7 +1302,17 @@ function drawDynamicsChart(item) {{
   const spanP = Math.max(1, maxP - minP);
   const maxA = Math.max(1, ...pts.map(p => p[4]));
 
-  const W = 670, H = 148, OX = 104, OY = 16;
+  const fmtAxisCopper = c => {{
+    if (c >= 100000 && spanP >= 50000) return `${{Math.round(c / 10000)}}g`;
+    if (c >= 10000) {{
+      const g = Math.floor(c / 10000);
+      const s = Math.floor((c % 10000) / 100);
+      return s > 0 ? `${{g}}g ${{s}}s` : `${{g}}g`;
+    }}
+    return fmtCopper(c);
+  }};
+
+  const W = 720, H = 148, OX = 76, OY = 16;
   const xAt = i => pts.length === 1 ? OX + W / 2 : OX + (i * W) / (pts.length - 1);
   const yAt = v => OY + H - ((v - minP) / spanP) * H;
 
@@ -1189,27 +1320,33 @@ function drawDynamicsChart(item) {{
     const val = Math.round(minP + t * spanP);
     const y = yAt(val);
     return `<line x1="${{OX}}" y1="${{y}}" x2="${{OX + W}}" y2="${{y}}" stroke="#1F283D" stroke-dasharray="3,4" />` +
-           `<text x="${{OX - 10}}" y="${{y + 4}}" fill="#94A3B8" font-size="10.5" font-family="Fira Code, monospace" text-anchor="end">${{fmtCopper(val)}}</text>`;
+           `<text x="${{OX - 10}}" y="${{y + 4}}" fill="#94A3B8" font-size="10.5" font-family="Fira Code, monospace" text-anchor="end">${{fmtAxisCopper(val)}}</text>`;
   }}).join("");
 
   // Supply sub-chart (bottom band: y=184..232)
   const sepLine = `<line x1="${{OX}}" y1="180" x2="${{OX + W}}" y2="180" stroke="#1F283D" />`;
+  const barW = Math.max(4, Math.min(20, Math.floor((W / Math.max(1, pts.length)) * 0.56)));
   const availBars = pts.map((p, i) => {{
     const bh = Math.max(4, Math.round((p[4] / maxA) * 34));
     const x = xAt(i);
-    return `<rect x="${{x - 10}}" y="${{226 - bh}}" width="20" height="${{bh}}" rx="3" fill="rgba(0,180,216,0.22)" stroke="rgba(0,180,216,0.45)" stroke-width="1" />` +
-           `<text x="${{x}}" y="${{221 - bh}}" fill="#64748B" font-size="9.5" font-family="Fira Code, monospace" text-anchor="middle">${{p[4]}}</text>`;
+    const lbl = barW >= 13
+      ? `<text x="${{x}}" y="${{221 - bh}}" fill="#64748B" font-size="9.5" font-family="Fira Code, monospace" text-anchor="middle">${{p[4]}}</text>`
+      : "";
+    return `<rect x="${{x - barW / 2}}" y="${{226 - bh}}" width="${{barW}}" height="${{bh}}" rx="2.5" fill="rgba(0,180,216,0.22)" stroke="rgba(0,180,216,0.45)" stroke-width="1" />` + lbl;
   }}).join("");
 
   const minPts = pts.map((p, i) => [xAt(i), yAt(p[1])]);
   const p25Pts = pts.map((p, i) => [xAt(i), yAt(p[2])]);
   const medPts = pts.map((p, i) => [xAt(i), yAt(p[3])]);
+  const linePath = arr => pts.length > 12
+    ? "M " + arr.map(pt => `${{pt[0].toFixed(1)}},${{pt[1].toFixed(1)}}`).join(" L ")
+    : smoothPath(arr);
 
   // Shaded spread band between P25 and Median
   const spreadPoly = [...medPts, ...[...p25Pts].reverse()].map(pt => `${{pt[0]}},${{pt[1]}}`).join(" ");
   const spreadBand = `<polygon points="${{spreadPoly}}" fill="rgba(139,92,246,0.08)" />`;
 
-  const areaPath = smoothPath(minPts) + ` L ${{minPts[minPts.length - 1][0]}} ${{OY + H}} L ${{minPts[0][0]}} ${{OY + H}} Z`;
+  const areaPath = linePath(minPts) + ` L ${{minPts[minPts.length - 1][0]}} ${{OY + H}} L ${{minPts[0][0]}} ${{OY + H}} Z`;
   const defs = `<defs>
     <linearGradient id="minGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#00B4D8" stop-opacity="0.32"/>
@@ -1218,17 +1355,41 @@ function drawDynamicsChart(item) {{
     <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>`;
 
-  const minPath = `<path d="${{smoothPath(minPts)}}" fill="none" stroke="#00B4D8" stroke-width="2.6" filter="url(#glow)" />`;
-  const p25Path = `<path d="${{smoothPath(p25Pts)}}" fill="none" stroke="#2AB86F" stroke-width="2" stroke-dasharray="5,3" />`;
-  const medPath = `<path d="${{smoothPath(medPts)}}" fill="none" stroke="#8B5CF6" stroke-width="2" />`;
+  const minPath = `<path d="${{linePath(minPts)}}" fill="none" stroke="#00B4D8" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow)" />`;
+  const p25Path = `<path d="${{linePath(p25Pts)}}" fill="none" stroke="#2AB86F" stroke-width="1.8" stroke-dasharray="5,3" stroke-linejoin="round" />`;
+  const medPath = `<path d="${{linePath(medPts)}}" fill="none" stroke="#8B5CF6" stroke-width="1.8" stroke-linejoin="round" />`;
 
+  const rSm = pts.length > 24 ? 2.2 : 3.2;
+  const rLg = pts.length > 24 ? 3.0 : 4.2;
   const dots = pts.map((p, i) => `
-    <circle cx="${{xAt(i)}}" cy="${{yAt(p[3])}}" r="3.5" fill="#8B5CF6" />
-    <circle cx="${{xAt(i)}}" cy="${{yAt(p[2])}}" r="3.5" fill="#2AB86F" />
-    <circle cx="${{xAt(i)}}" cy="${{yAt(p[1])}}" r="4.5" fill="#00B4D8" stroke="#080B12" stroke-width="1.5" />
+    <circle cx="${{xAt(i)}}" cy="${{yAt(p[3])}}" r="${{rSm}}" fill="#8B5CF6" />
+    <circle cx="${{xAt(i)}}" cy="${{yAt(p[2])}}" r="${{rSm}}" fill="#2AB86F" />
+    <circle cx="${{xAt(i)}}" cy="${{yAt(p[1])}}" r="${{rLg}}" fill="#00B4D8" stroke="#080B12" stroke-width="1.4" />
   `).join("");
 
-  const labels = pts.map((p, i) => `<text x="${{xAt(i)}}" y="248" fill="#94A3B8" font-size="10.5" font-family="Fira Code, monospace" text-anchor="middle">${{p[0].slice(5, 16)}}</text>`).join("");
+  // Evenly spaced non-overlapping X-axis ticks (max 6 labels)
+  const tickStep = Math.max(1, Math.ceil((pts.length - 1) / 5));
+  const tickIndices = [];
+  for (let i = 0; i < pts.length; i += tickStep) tickIndices.push(i);
+  if (tickIndices[tickIndices.length - 1] !== pts.length - 1) {{
+    if (pts.length - 1 - tickIndices[tickIndices.length - 1] < tickStep * 0.45 && tickIndices.length > 1) {{
+      tickIndices[tickIndices.length - 1] = pts.length - 1;
+    }} else {{
+      tickIndices.push(pts.length - 1);
+    }}
+  }}
+  let prevDay = "";
+  const labels = tickIndices.map((i, k) => {{
+    const ts = pts[i][0]; // YYYY-MM-DD HH:MM
+    const day = ts.slice(8, 10) + "." + ts.slice(5, 7);
+    const hm = ts.slice(11, 16);
+    const txt = (k === 0 || day !== prevDay) ? `${{day}} ${{hm}}` : hm;
+    prevDay = day;
+    const x = xAt(i);
+    const anchor = k === 0 && pts.length > 2 ? "start" : (k === tickIndices.length - 1 && pts.length > 2 ? "end" : "middle");
+    return `<line x1="${{x}}" y1="227" x2="${{x}}" y2="232" stroke="#334155" />` +
+           `<text x="${{x}}" y="247" fill="#94A3B8" font-size="10.5" font-family="Fira Code, monospace" text-anchor="${{anchor}}">${{txt}}</text>`;
+  }}).join("");
   const hoverLine = `<line id="crosshair" x1="0" y1="${{OY}}" x2="0" y2="230" stroke="#00B4D8" stroke-width="1" stroke-dasharray="3,3" style="display:none;" />`;
   const hitZones = pts.map((p, i) => {{
     const x = xAt(i);
@@ -1247,9 +1408,9 @@ function drawDynamicsChart(item) {{
       if (ch) {{ ch.setAttribute("x1", cx); ch.setAttribute("x2", cx); ch.style.display = "block"; }}
       tooltip.innerHTML = `
         <div class="mono" style="color:var(--accent); font-weight:600; margin-bottom:4px;">${{p[0]}} UTC</div>
-        <div>Мин. АХ: <b class="mono">${{fmtCopper(p[1])}}</b></div>
-        <div>P25 (1/4): <b class="mono" style="color:#2AB86F;">${{fmtCopper(p[2])}}</b></div>
-        <div>Медиана: <b class="mono" style="color:#8B5CF6;">${{fmtCopper(p[3])}}</b></div>
+        <div>Мин. АХ: <b class="mono">${{fmtCoinsHtml(p[1])}}</b></div>
+        <div>P25 (1/4): <b class="mono" style="color:#2AB86F;">${{fmtCoinsHtml(p[2])}}</b></div>
+        <div>Медиана: <b class="mono" style="color:#8B5CF6;">${{fmtCoinsHtml(p[3])}}</b></div>
         <div style="margin-top:3px; color:var(--muted);">Остаток: <b class="mono" style="color:var(--text);">${{p[4]}} шт.</b></div>
       `;
       tooltip.style.display = "block";
@@ -1279,7 +1440,7 @@ function applyViewVisibility() {{
   document.getElementById("signalsSection").classList.toggle("hidden", currentView !== "overview" && currentView !== "signals");
   document.getElementById("inspectorSection").classList.toggle("hidden", isTrans);
   document.getElementById("explorerSection").classList.toggle("hidden", isTrans);
-  document.getElementById("transmutesSection").classList.toggle("hidden", currentView !== "overview" && !isTrans);
+  document.getElementById("transmutesSection").classList.toggle("hidden", !isTrans);
 }}
 
 function renderTable() {{
@@ -1317,27 +1478,17 @@ function renderTable() {{
       <td class="mono"><b style="color:${{it.score >= 65 ? 'var(--pos)' : it.score >= 45 ? 'var(--accent)' : 'var(--muted)'}}">${{it.score}}</b></td>
       <td>${{signalBadge(it.signal)}}</td>
       <td style="color:var(--muted);">${{it.liquidity}}</td>
-      <td class="mono"><b>${{it.current_min_fmt}}</b></td>
-      <td class="mono">${{it.p25_fmt}}</td>
-      <td class="mono">${{it.median_fmt}}</td>
-      <td class="mono">${{it.craft_cost_fmt}}</td>
-      <td class="${{it.craft_profit > 0 ? 'pos' : it.craft_profit < 0 ? 'neg' : 'mono'}}">${{it.craft_profit_fmt}}</td>
+      <td class="mono"><b>${{fmtCoinsHtml(it.current_min)}}</b></td>
+      <td class="mono">${{fmtCoinsHtml(it.p25)}}</td>
+      <td class="mono">${{fmtCoinsHtml(it.median)}}</td>
+      <td class="mono">${{fmtCoinsHtml(it.craft_cost)}}</td>
+      <td class="${{it.craft_profit > 0 ? 'pos' : it.craft_profit < 0 ? 'neg' : 'mono'}}">${{fmtCoinsHtml(it.craft_profit)}}</td>
       <td class="${{it.roi > 0 ? 'pos' : it.roi < 0 ? 'neg' : 'mono'}}">${{it.roi_fmt}}</td>
       <td style="color:var(--muted); font-size:12px;">${{it.reagents}}</td>
       <td class="mono">${{it.avail}}</td>
     </tr>
   `;}}).join("");
   const tipEl = document.getElementById("itemTooltip");
-  const fmtCoinsHtml = copper => {{
-    const g = Math.floor(copper / 10000);
-    const s = Math.floor((copper % 10000) / 100);
-    const c = copper % 100;
-    const parts = [];
-    if (g > 0) parts.push(`${{g}}<span class="wt-coin wt-coin-g"></span>`);
-    if (s > 0 || g > 0) parts.push(`${{s}}<span class="wt-coin wt-coin-s"></span>`);
-    parts.push(`${{c}}<span class="wt-coin wt-coin-c"></span>`);
-    return parts.join("");
-  }};
   tbody.querySelectorAll(".item-cell[data-tip-id]").forEach(el => {{
     el.addEventListener("mouseenter", e => {{
       const it = ITEMS.find(x => String(x.item_id) === el.dataset.tipId);

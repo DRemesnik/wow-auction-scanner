@@ -223,10 +223,13 @@ def cmd_watch(args: argparse.Namespace, cfg: TrackerConfig) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from . import __version__
+
     parser = argparse.ArgumentParser(
         prog="ah-tracker",
         description="WoW: Forever Auction House Tracker & Transmute Analytics",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--db", help="Path to SQLite database (default: data/ah_tracker.sqlite)")
 
     sub = parser.add_subparsers(dest="command", required=True)

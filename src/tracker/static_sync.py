@@ -6,6 +6,7 @@ import http.client
 import json
 import sqlite3
 import threading
+import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -33,15 +34,18 @@ def _get_json_keepalive(
     full_path = f"{path}{sep}namespace={urllib.parse.quote(namespace)}&locale={urllib.parse.quote(locale)}"
     headers = {"Authorization": f"Bearer {token}", "Connection": "keep-alive"}
 
-    for attempt in range(2):
+    for attempt in range(4):
         try:
             conn.request("GET", full_path, headers=headers)
             resp = conn.getresponse()
             body = resp.read()
             if resp.status == 200:
                 return json.loads(body.decode("utf-8"))
-            if resp.status in (404, 429, 500, 502, 503):
+            if resp.status == 404:
                 return None
+            if resp.status in (429, 500, 502, 503) and attempt < 3:
+                time.sleep(0.4 * (attempt + 1))
+                continue
             return None
         except (http.client.HTTPException, OSError):
             try:
@@ -50,8 +54,9 @@ def _get_json_keepalive(
                 pass
             conn = http.client.HTTPSConnection(host, timeout=15)
             _thread_local.conn = conn
-            if attempt == 1:
+            if attempt == 3:
                 return None
+            time.sleep(0.3 * (attempt + 1))
     return None
 
 

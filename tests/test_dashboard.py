@@ -62,3 +62,36 @@ def test_dashboard_current_craft_cost_and_profit(tmp_path: Path) -> None:
     assert "Луноткань" in text
     assert "Динамика цен" in text
     assert "Торговые сигналы" in text
+
+
+def test_signal_guardrails_reject_stale_gear_flip_and_missing_reagents() -> None:
+    from tracker.dashboard import _evaluate_trade_decision
+
+    # 1-unit-per-lot BoE gear with fake P25 gap must NOT be flagged СКУПКА
+    sig, _, _ = _evaluate_trade_decision(
+        current_min=1_100,
+        p25=8_100,
+        median=9_001,
+        craft_cost=None,
+        craft_profit=None,
+        roi_pct=None,
+        avail=21,
+        sample_size=21,
+    )
+    assert sig != "СКУПКА"
+
+    # Craftable item with < 2 batches of reagents on AH must downgrade to ОСТОРОЖНО
+    sig_reag, sc_reag, reason_reag = _evaluate_trade_decision(
+        current_min=100_000,
+        p25=100_000,
+        median=105_000,
+        craft_cost=40_000,
+        craft_profit=55_000,
+        roi_pct=137.5,
+        avail=30,
+        sample_size=12,
+        reagent_batches=1,
+    )
+    assert sig_reag == "ОСТОРОЖНО"
+    assert sc_reag <= 52
+    assert "мало реагентов" in reason_reag
