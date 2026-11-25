@@ -722,6 +722,15 @@ def render_dashboard_html(data: dict) -> str:
         f'</button>'
         for pname in ordered_profs
     )
+    prof_tabs_html = (
+        '<button class="prof-tab active" data-view="overview">Обзор</button>'
+        '<button class="prof-tab" data-view="signals">Сигналы</button>'
+        + "".join(
+            f'<button class="prof-tab" data-view="{html.escape(pname)}">{html.escape(pname)} <span class="tab-cnt">{prof_counts.get(pname, 0)}</span></button>'
+            for pname in ordered_profs
+        )
+        + f'<button class="prof-tab" data-view="ALL">Весь рынок <span class="tab-cnt">{len(data["items"])}</span></button>'
+    )
 
     def _top_signals_for_prof(prof_name: str, limit: int = 6) -> list[DashboardItemRow]:
         candidates = [
@@ -925,7 +934,7 @@ def render_dashboard_html(data: dict) -> str:
   .live-pill {{ display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--border-strong); padding: 6px 12px; border-radius: 999px; font-size: 12px; color: var(--muted); }}
   .live-dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--pos); box-shadow: 0 0 10px var(--pos); animation: pulse 2.2s infinite; }}
   @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: .45; }} }}
-  .content {{ padding: 20px 24px 36px; display: flex; flex-direction: column; gap: 20px; }}
+  .content {{ padding: 20px 24px 36px; display: flex; flex-direction: column; gap: 20px; max-width: 1680px; width: 100%; margin: 0 auto; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr)); gap: 12px; }}
   .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); }}
   .dt-bento {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }}
@@ -955,25 +964,42 @@ def render_dashboard_html(data: dict) -> str:
   .sig-snipe {{ background: rgba(0, 180, 216, 0.14); color: #00B4D8; border: 1px solid rgba(0, 180, 216, 0.38); }}
   .sig-low {{ background: rgba(245, 158, 11, 0.14); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.38); }}
   .sig-bad {{ background: rgba(239, 68, 68, 0.12); color: #EF4444; border: 1px solid rgba(239, 68, 68, 0.32); }}
-  .inspector-grid {{ display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; align-items: stretch; }}
+  .workspace-split {{ display: grid; grid-template-columns: minmax(0, 1.38fr) minmax(380px, 0.92fr); gap: 16px; align-items: start; }}
+  #inspectorSection {{ position: sticky; top: 68px; }}
+  .inspector-grid {{ display: flex; flex-direction: column; gap: 12px; }}
   .insp-metrics {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }}
   .insp-kv {{ background: var(--rail); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }}
   .insp-k {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }}
   .insp-v {{ font-family: "Fira Code", monospace; font-size: 14px; font-weight: 600; margin-top: 3px; }}
+  .prof-tabs {{ display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }}
+  .prof-tab {{
+    background: var(--card); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 500;
+    cursor: pointer; font-family: inherit; transition: all .14s ease; display: inline-flex; align-items: center; gap: 6px;
+  }}
+  .prof-tab:hover {{ color: var(--text); border-color: var(--border-strong); }}
+  .prof-tab.active {{ color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }}
+  .tab-cnt {{ font-family: "Fira Code", monospace; font-size: 10.5px; opacity: .8; }}
   .controls {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
   .btn {{ background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12.5px; font-weight: 500; transition: all .14s ease; font-family: inherit; }}
   .btn:hover {{ border-color: var(--border-strong); background: var(--card-alt); }}
   .btn.active {{ border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }}
-  .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: auto; max-height: 640px; }}
+  .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: auto; max-height: 760px; }}
+  .hide-reagents .col-reagents {{ display: none; }}
   table {{ width: 100%; border-collapse: collapse; }}
-  th, td {{ padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; font-size: 12.5px; }}
-  th {{ position: sticky; top: 0; z-index: 2; color: var(--muted); font-weight: 600; background: #0D111C; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }}
+  th, td {{ padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 12.5px; }}
+  th {{ position: sticky; top: 0; z-index: 2; color: var(--muted); font-weight: 600; background: #0D111C; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }}
+  th.num, td.num {{ text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+  td.num .coin-price {{ justify-content: flex-end; }}
   th.sortable {{ cursor: pointer; user-select: none; }}
   th.sortable:hover {{ color: var(--text); }}
   th.sortable.active-sort {{ color: var(--accent); }}
   tbody tr {{ transition: background .1s ease; }}
   tbody tr:hover {{ background: #182034; }}
   tbody tr.selected-row {{ background: rgba(0, 180, 216, 0.11); }}
+  .fav-btn {{ background: transparent; border: 0; color: #475569; cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 4px; transition: color .12s ease, transform .12s ease; }}
+  .fav-btn:hover {{ color: #FACC15; transform: scale(1.12); }}
+  .fav-btn.is-fav {{ color: #FACC15; }}
   .pos {{ color: var(--pos); font-weight: 600; font-family: "Fira Code", monospace; }}
   .neg {{ color: var(--neg); font-weight: 600; font-family: "Fira Code", monospace; }}
   .copy-btn {{ background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 4px; vertical-align: middle; opacity: .7; }}
@@ -1005,10 +1031,14 @@ def render_dashboard_html(data: dict) -> str:
   @media (prefers-reduced-motion: reduce) {{
     *, *::before, *::after {{ animation: none !important; transition: none !important; }}
   }}
+  @media (max-width: 1240px) {{
+    .workspace-split {{ grid-template-columns: 1fr; }}
+    #inspectorSection {{ position: static; }}
+  }}
   @media (max-width: 980px) {{
     .shell {{ grid-template-columns: 1fr; }}
     .rail {{ position: static; height: auto; }}
-    .inspector-grid, .panel-2 {{ grid-template-columns: 1fr; }}
+    .panel-2 {{ grid-template-columns: 1fr; }}
   }}
 </style>
 </head>
@@ -1113,61 +1143,37 @@ def render_dashboard_html(data: dict) -> str:
         </div>
       </section>
 
-      <section id="inspectorSection">
-        <div class="section-head"><h2 class="section-title">Динамика цен и инспектор предмета</h2><span class="meta">Кликните по любой строке ниже</span></div>
-        <div class="inspector-grid">
-          <div class="card" style="position:relative;">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
-              <div id="chartTitle" style="font-weight:600; font-size:13.5px;">Выберите предмет</div>
-              <div id="chartLegend" style="display:flex; gap:10px; flex-wrap:wrap; font-size:11.5px; color:var(--muted);"></div>
-            </div>
-            <svg id="dynSvg" viewBox="0 0 820 260" style="width:100%; height:260px; display:block; overflow:visible;"></svg>
-            <div id="chartTooltip" style="position:absolute; display:none; pointer-events:none; background:rgba(13,17,28,0.96); border:1px solid var(--border-strong); border-radius:8px; padding:8px 11px; font-size:11.5px; box-shadow:0 10px 24px rgba(0,0,0,0.5); z-index:20; min-width:170px;"></div>
-          </div>
-          <div class="card" id="inspectorDetail">
-            <div class="card-label">Карточка предмета</div>
-            <div id="inspName" style="font-size:16px; font-weight:700; margin-top:6px;">—</div>
-            <div id="inspReason" style="font-size:12px; color:var(--accent); margin-top:4px;">—</div>
-            <div id="inspReagents" class="meta" style="margin-top:4px;">Реагенты: —</div>
-            <div class="insp-metrics">
-              <div class="insp-kv"><div class="insp-k">Мин. АХ</div><div class="insp-v" id="inspMin">—</div></div>
-              <div class="insp-kv"><div class="insp-k">Крафт</div><div class="insp-v" id="inspCost">—</div></div>
-              <div class="insp-kv"><div class="insp-k">Профит (-5%)</div><div class="insp-v pos" id="inspProfit">—</div></div>
-              <div class="insp-kv"><div class="insp-k">Ликвидность</div><div class="insp-v" id="inspLiq">—</div></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
+      <div class="workspace-split" id="workspaceSplit">
       <section id="explorerSection">
         <div class="section-head">
           <h2 class="section-title">Обозреватель рынка и крафта</h2>
           <span id="countInfo" class="meta"></span>
         </div>
+        <div class="prof-tabs" id="profTabs">{prof_tabs_html}</div>
         <div class="controls" style="margin-bottom:12px;">
+          <button class="btn" id="onlyFavsBtn">★ Избранное (<span id="favCount">0</span>)</button>
           <button class="btn" id="onlyCraftableBtn">Только крафтовые</button>
           <button class="btn" id="onlySignalsBtn">Только сигналы</button>
           <button class="btn" id="onlyProfitBtn">Только выгодные</button>
+          <button class="btn" id="toggleReagentsBtn">Показать реагенты</button>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap hide-reagents" id="itemsTableWrap">
         <table>
           <thead>
             <tr>
-              <th class="sortable" data-sort="item_id">ID</th>
+              <th>★</th>
               <th class="sortable" data-sort="name_ru">Предмет</th>
-              <th class="sortable" data-sort="group">Раздел</th>
               <th class="sortable" data-sort="profession">Крафт</th>
-              <th class="sortable" data-sort="score">Скор</th>
+              <th class="sortable num" data-sort="score">Скор</th>
               <th class="sortable" data-sort="signal">Сигнал</th>
               <th class="sortable" data-sort="liquidity">Ликвид.</th>
-              <th class="sortable" data-sort="current_min">Мин. АХ</th>
-              <th class="sortable" data-sort="p25">Нижняя 1/4 (P25)</th>
-              <th class="sortable" data-sort="median">Медиана АХ</th>
-              <th class="sortable" data-sort="craft_cost">Себестоимость</th>
-              <th class="sortable" data-sort="craft_profit">Профит (-5%)</th>
-              <th class="sortable" data-sort="roi">ROI %</th>
-              <th class="sortable" data-sort="reagents">Реагенты</th>
-              <th class="sortable" data-sort="avail">Ост.</th>
+              <th class="sortable num" data-sort="current_min">Мин. АХ</th>
+              <th class="sortable num" data-sort="p25">P25</th>
+              <th class="sortable num" data-sort="craft_cost">Крафт</th>
+              <th class="sortable num" data-sort="craft_profit">Профит (-5%)</th>
+              <th class="sortable num" data-sort="roi">ROI %</th>
+              <th class="sortable col-reagents" data-sort="reagents">Реагенты</th>
+              <th class="sortable num" data-sort="avail">Ост.</th>
             </tr>
           </thead>
           <tbody id="itemsBody"></tbody>
@@ -1177,6 +1183,33 @@ def render_dashboard_html(data: dict) -> str:
           <button class="btn" id="loadMoreBtn" style="display:none;">Показать ещё +200</button>
         </div>
       </section>
+
+      <section id="inspectorSection">
+        <div class="section-head"><h2 class="section-title">Динамика цен и инспектор</h2><span class="meta">Кликните по строке слева</span></div>
+        <div class="inspector-grid">
+          <div class="card" style="position:relative;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+              <div id="chartTitle" style="font-weight:600; font-size:13.5px;">Выберите предмет</div>
+              <div id="chartLegend" style="display:flex; gap:10px; flex-wrap:wrap; font-size:11.5px; color:var(--muted);"></div>
+            </div>
+            <svg id="dynSvg" viewBox="0 0 820 260" style="width:100%; height:245px; display:block; overflow:visible;"></svg>
+            <div id="chartTooltip" style="position:absolute; display:none; pointer-events:none; background:rgba(13,17,28,0.96); border:1px solid var(--border-strong); border-radius:8px; padding:8px 11px; font-size:11.5px; box-shadow:0 10px 24px rgba(0,0,0,0.5); z-index:20; min-width:170px;"></div>
+          </div>
+          <div class="card" id="inspectorDetail">
+            <div class="card-label">Карточка предмета</div>
+            <div id="inspName" style="font-size:16px; font-weight:700; margin-top:6px;">—</div>
+            <div id="inspReason" style="font-size:12px; color:var(--accent); margin-top:4px;">—</div>
+            <div id="inspReagents" class="meta" style="margin-top:6px; line-height:1.45;">Реагенты: —</div>
+            <div class="insp-metrics">
+              <div class="insp-kv"><div class="insp-k">Мин. АХ</div><div class="insp-v" id="inspMin">—</div></div>
+              <div class="insp-kv"><div class="insp-k">Крафт</div><div class="insp-v" id="inspCost">—</div></div>
+              <div class="insp-kv"><div class="insp-k">Профит (-5%)</div><div class="insp-v pos" id="inspProfit">—</div></div>
+              <div class="insp-kv"><div class="insp-k">Ликвидность</div><div class="insp-v" id="inspLiq">—</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+      </div>
 
       <section id="transmutesSection">
         <div class="section-head"><h2 class="section-title">Трансмутации Алхимии (КД и окупаемость рецептов)</h2><span class="meta">Комиссия АХ 5%</span></div>
@@ -1204,12 +1237,23 @@ const ITEMS = {items_json};
 const HISTORY = {history_json};
 let currentView = "overview";
 let currentQuery = "";
+let onlyFavs = false;
 let onlyCraftable = false;
 let onlySignals = false;
 let onlyProfit = false;
+let showReagents = false;
 let sortKey = "craft_profit";
 let sortDir = -1;
 let renderLimit = 200;
+const FAV_KEY = "wow_ah_favorites_v1";
+const FAVORITES = new Set((() => {{
+  try {{ return JSON.parse(localStorage.getItem(FAV_KEY) || "[]").map(Number); }} catch (_e) {{ return []; }}
+}})());
+function saveFavorites() {{
+  try {{ localStorage.setItem(FAV_KEY, JSON.stringify([...FAVORITES])); }} catch (_e) {{}}
+  const fc = document.getElementById("favCount");
+  if (fc) fc.textContent = String(FAVORITES.size);
+}}
 
 function compareValues(a, b) {{
   const va = a[sortKey];
@@ -1446,18 +1490,19 @@ function signalBadge(sig) {{
 function applyViewVisibility() {{
   const isTrans = currentView === "transmutes";
   document.getElementById("signalsSection").classList.toggle("hidden", currentView !== "overview" && currentView !== "signals");
-  document.getElementById("inspectorSection").classList.toggle("hidden", isTrans);
-  document.getElementById("explorerSection").classList.toggle("hidden", isTrans);
+  document.getElementById("workspaceSplit").classList.toggle("hidden", isTrans);
   document.getElementById("transmutesSection").classList.toggle("hidden", !isTrans);
 }}
 
 function renderTable() {{
   applyViewVisibility();
+  saveFavorites();
   const tbody = document.getElementById("itemsBody");
   const filtered = ITEMS.filter(it =>
     (currentView === "ALL" || currentView === "signals"
       ? (currentView !== "signals" || ["КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"].includes(it.signal))
       : (currentView === "overview" ? it.group !== "Весь рынок" : it.group === currentView)) &&
+    (!onlyFavs || FAVORITES.has(it.item_id)) &&
     (!onlyCraftable || it.is_craftable) &&
     (!onlySignals || ["КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"].includes(it.signal)) &&
     (!onlyProfit || (it.craft_profit !== null && it.craft_profit > 0)) &&
@@ -1477,25 +1522,33 @@ function renderTable() {{
       ? `<img class="item-icon" src="${{it.icon}}" loading="lazy" alt="" />`
       : `<span class="item-icon" style="display:inline-grid;place-items:center;font-size:10px;color:var(--muted);">•</span>`;
     const qCls = it.quality ? `q-${{it.quality}}` : "";
+    const isFav = FAVORITES.has(it.item_id);
     return `
     <tr data-id="${{it.item_id}}" style="cursor:pointer;">
-      <td class="mono">${{it.item_id}}</td>
+      <td><button class="fav-btn ${{isFav ? 'is-fav' : ''}}" data-fav="${{it.item_id}}" title="В избранное">★</button></td>
       <td><span class="item-cell" data-tip-id="${{it.item_id}}">${{iconTag}}<span class="${{qCls}}">${{it.name_ru}}</span><button class="copy-btn" data-copy="${{it.name_ru.replace(/"/g, '&quot;')}}" title="Копировать название"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span></td>
-      <td>${{it.group}}</td>
       <td>${{it.is_craftable ? '<span class="pos">' + it.profession + '</span>' : '—'}}</td>
-      <td class="mono"><b style="color:${{it.score >= 65 ? 'var(--pos)' : it.score >= 45 ? 'var(--accent)' : 'var(--muted)'}}">${{it.score}}</b></td>
+      <td class="mono num"><b style="color:${{it.score >= 65 ? 'var(--pos)' : it.score >= 45 ? 'var(--accent)' : 'var(--muted)'}}">${{it.score}}</b></td>
       <td>${{signalBadge(it.signal)}}</td>
       <td style="color:var(--muted);">${{it.liquidity}}</td>
-      <td class="mono"><b>${{fmtCoinsHtml(it.current_min)}}</b></td>
-      <td class="mono">${{fmtCoinsHtml(it.p25)}}</td>
-      <td class="mono">${{fmtCoinsHtml(it.median)}}</td>
-      <td class="mono">${{fmtCoinsHtml(it.craft_cost)}}</td>
-      <td class="${{it.craft_profit > 0 ? 'pos' : it.craft_profit < 0 ? 'neg' : 'mono'}}">${{fmtCoinsHtml(it.craft_profit)}}</td>
-      <td class="${{it.roi > 0 ? 'pos' : it.roi < 0 ? 'neg' : 'mono'}}">${{it.roi_fmt}}</td>
-      <td style="color:var(--muted); font-size:12px;">${{it.reagents}}</td>
-      <td class="mono">${{it.avail}}</td>
+      <td class="mono num"><b>${{fmtCoinsHtml(it.current_min)}}</b></td>
+      <td class="mono num" style="color:var(--muted);">${{fmtCoinsHtml(it.p25)}}</td>
+      <td class="mono num" style="color:var(--muted);">${{fmtCoinsHtml(it.craft_cost)}}</td>
+      <td class="num ${{it.craft_profit > 0 ? 'pos' : it.craft_profit < 0 ? 'neg' : 'mono'}}">${{fmtCoinsHtml(it.craft_profit)}}</td>
+      <td class="num ${{it.roi > 0 ? 'pos' : it.roi < 0 ? 'neg' : 'mono'}}">${{it.roi_fmt}}</td>
+      <td class="col-reagents" style="color:var(--muted); font-size:12px;">${{it.reagents}}</td>
+      <td class="mono num">${{it.avail}}</td>
     </tr>
   `;}}).join("");
+  tbody.querySelectorAll(".fav-btn").forEach(btn => {{
+    btn.addEventListener("click", e => {{
+      e.stopPropagation();
+      const id = Number(btn.dataset.fav);
+      if (FAVORITES.has(id)) FAVORITES.delete(id);
+      else FAVORITES.add(id);
+      renderTable();
+    }});
+  }});
   const tipEl = document.getElementById("itemTooltip");
   tbody.querySelectorAll(".item-cell[data-tip-id]").forEach(el => {{
     el.addEventListener("mouseenter", e => {{
@@ -1590,29 +1643,36 @@ renderTable();
   }});
 }});
 
-document.querySelectorAll(".nav-btn[data-view]").forEach(btn => {{
-  btn.addEventListener("click", () => {{
-    document.querySelectorAll(".nav-btn[data-view]").forEach(x => x.classList.remove("active"));
-    btn.classList.add("active");
-    currentView = btn.dataset.view;
-    if (currentView === "signals") {{
-      sortKey = "score";
-      sortDir = -1;
-    }}
-    document.getElementById("viewTitle").textContent = btn.querySelector(".nav-left").textContent.trim();
-    renderLimit = 200;
-    document.querySelectorAll(".quick-pill[data-id], .dt-bar-row[data-id]").forEach(el => {{
-  el.addEventListener("click", () => {{
-    const found = ITEMS.find(x => String(x.item_id) === el.dataset.id);
-    if (found) {{
-      drawDynamicsChart(found);
-      document.getElementById("inspectorSection").scrollIntoView({{ behavior: "smooth", block: "nearest" }});
-    }}
-  }});
-}});
+function setActiveView(view, titleText) {{
+  currentView = view;
+  if (currentView === "signals") {{
+    sortKey = "score";
+    sortDir = -1;
+  }}
+  document.querySelectorAll(".nav-btn[data-view]").forEach(x => x.classList.toggle("active", x.dataset.view === view));
+  document.querySelectorAll(".prof-tab[data-view]").forEach(x => x.classList.toggle("active", x.dataset.view === view));
+  if (titleText) document.getElementById("viewTitle").textContent = titleText;
+  renderLimit = 200;
+  renderTable();
+}}
 
-renderTable();
-  }});
+document.querySelectorAll(".nav-btn[data-view]").forEach(btn => {{
+  btn.addEventListener("click", () => setActiveView(btn.dataset.view, btn.querySelector(".nav-left").textContent.trim()));
+}});
+document.querySelectorAll(".prof-tab[data-view]").forEach(tab => {{
+  tab.addEventListener("click", () => setActiveView(tab.dataset.view, tab.textContent.replace(/\d+$/, "").trim()));
+}});
+document.getElementById("onlyFavsBtn").addEventListener("click", e => {{
+  onlyFavs = !onlyFavs;
+  e.currentTarget.classList.toggle("active", onlyFavs);
+  renderLimit = 200;
+  renderTable();
+}});
+document.getElementById("toggleReagentsBtn").addEventListener("click", e => {{
+  showReagents = !showReagents;
+  e.currentTarget.classList.toggle("active", showReagents);
+  e.currentTarget.textContent = showReagents ? "Скрыть реагенты" : "Показать реагенты";
+  document.getElementById("itemsTableWrap").classList.toggle("hide-reagents", !showReagents);
 }});
 
 document.getElementById("loadMoreBtn").addEventListener("click", () => {{ renderLimit += 200; document.querySelectorAll(".quick-pill[data-id], .dt-bar-row[data-id]").forEach(el => {{
