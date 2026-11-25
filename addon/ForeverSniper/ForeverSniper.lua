@@ -15,6 +15,7 @@ ForeverSniperDB = ForeverSniperDB or {
   autoScan = false,
   rotateScan = false,
   soundAlert = true,
+  miniMode = false,
 }
 
 local function IsSoundEnabled()
@@ -122,6 +123,16 @@ local function FormatCoinsPlain(copper)
   if s > 0 or g > 0 then table.insert(parts, s .. "s") end
   table.insert(parts, c .. "c")
   return table.concat(parts, " ")
+end
+
+local itemKeyCache = {}
+local function GetCachedItemKey(itemID)
+  local k = itemKeyCache[itemID]
+  if not k and C_AuctionHouse and C_AuctionHouse.MakeItemKey then
+    k = C_AuctionHouse.MakeItemKey(itemID)
+    itemKeyCache[itemID] = k
+  end
+  return k
 end
 
 local itemVisualCache = {}
@@ -310,8 +321,8 @@ closeBtn:SetScript("OnClick", function() f:Hide() end)
 
 -- Live Status Pill
 local statusPill = CreateFrame("Frame", nil, f, "BackdropTemplate")
-statusPill:SetSize(134, 26)
-statusPill:SetPoint("RIGHT", closeBtn, "LEFT", -8, 0)
+statusPill:SetSize(118, 26)
+statusPill:SetPoint("RIGHT", closeBtn, "LEFT", -6, 0)
 statusPill:SetBackdrop(FLAT_BACKDROP)
 statusPill:SetBackdropColor(0.07, 0.10, 0.18, 1)
 statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
@@ -321,8 +332,13 @@ statusText:SetPoint("CENTER")
 statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
 
 -- Sound Alert Toggle (works in background via Sound_EnableSoundWhenGameIsInBG)
-local soundBtn = CreateFlatButton(nil, f, 88, 26, "Звук: ВКЛ")
+local soundBtn = CreateFlatButton(nil, f, 80, 26, "Звук: ВКЛ")
 soundBtn:SetPoint("RIGHT", statusPill, "LEFT", -6, 0)
+
+-- Compact Mini Sniper Mode Toggle
+local miniBtn = CreateFlatButton(nil, f, 54, 26, "Мини")
+miniBtn:SetPoint("RIGHT", soundBtn, "LEFT", -6, 0)
+miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.78, 0.84, 0.94 })
 
 local function RefreshSoundBtn()
   if IsSoundEnabled() then
@@ -1151,14 +1167,57 @@ skipBtn:SetFlatEnabled(false)
 -- ============================================================================
 -- Helpers & UI State Sync
 -- ============================================================================
-local function GetBuyHotkeySuffix()
-  if not GetBindingKey then return "" end
+local buyHotkeySuffixCache = ""
+local function RefreshBuyHotkeyCache()
+  if not GetBindingKey then
+    buyHotkeySuffixCache = ""
+    return
+  end
   local key = GetBindingKey("FOREVERSNIPER_BUY")
   if key and key ~= "" then
-    return "  |cfffef08a[" .. key .. "]|r"
+    buyHotkeySuffixCache = "  |cfffef08a[" .. key .. "]|r"
+  else
+    buyHotkeySuffixCache = ""
   end
-  return ""
 end
+
+local function GetBuyHotkeySuffix()
+  return buyHotkeySuffixCache
+end
+
+local function ApplyMiniMode()
+  local isMini = not not ForeverSniperDB.miniMode
+  if isMini then
+    cfgCard:Hide()
+    wlHeader:Hide()
+    presetsBtn:Hide()
+    rotateBtn:Hide()
+    wlBox:Hide()
+    dealCard:ClearAllPoints()
+    dealCard:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -62)
+    dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -16, -62)
+    f:SetHeight(248)
+    miniBtn:SetLabel("Полн.")
+    miniBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.75 }, { 0.85, 1, 0.94 })
+  else
+    cfgCard:Show()
+    wlHeader:Show()
+    presetsBtn:Show()
+    rotateBtn:Show()
+    wlBox:Show()
+    dealCard:ClearAllPoints()
+    dealCard:SetPoint("TOPLEFT", wlBox, "BOTTOMLEFT", 0, -10)
+    dealCard:SetPoint("TOPRIGHT", wlBox, "BOTTOMRIGHT", 0, -10)
+    f:SetHeight(530)
+    miniBtn:SetLabel("Мини")
+    miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.78, 0.84, 0.94 })
+  end
+end
+
+miniBtn:SetScript("OnClick", function()
+  ForeverSniperDB.miniMode = not ForeverSniperDB.miniMode
+  ApplyMiniMode()
+end)
 
 local function RefreshBuyButtonText()
   local deal = state.pendingDeal
@@ -1222,6 +1281,7 @@ local ClearPendingDeal
 local UpdateStatus
 
 local function RenderWatchlist()
+  if ForeverSniperDB.miniMode or not f:IsShown() then return end
   for _, row in ipairs(wlRows) do
     row:Hide()
   end
@@ -1674,7 +1734,7 @@ local function SendTargetQuery()
   end
 
   -- Send AH network query FIRST for minimum latency, then update UI
-  local itemKey = C_AuctionHouse.MakeItemKey(targetID)
+  local itemKey = GetCachedItemKey(targetID)
   C_AuctionHouse.SendSearchQuery(itemKey, PRICE_SORTS, false)
 
   state.throttled = false
@@ -1685,11 +1745,15 @@ local function SendTargetQuery()
     state.cleanQueryStreak = 0
     state.queryInterval = math.max(0.25, state.queryInterval - 0.05)
   end
-  if rotated then
-    UpdateStatus()
-  else
-    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
-    statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
+  statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+  statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
+  if rotated and not ForeverSniperDB.miniMode then
+    local icon, nm, r, g, b = GetItemVisuals(targetID)
+    itemIcon:SetTexture(icon)
+    iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
+    targetNameText:SetText(nm)
+    targetNameText:SetTextColor(r, g, b)
+    queueCounter:SetText(string.format("%d / %d", state.idx, #state.queue))
   end
 end
 
@@ -2256,8 +2320,10 @@ f:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
 f:SetScript("OnEvent", function(_, event, arg1)
   if event == "PLAYER_LOGIN" then
     EnsureBackgroundSoundCVar()
+    RefreshBuyHotkeyCache()
     RefreshSoundBtn()
     RefreshRotateBtn()
+    ApplyMiniMode()
     UpdateMinimapPos()
     HookAuctionHouseFrame()
     UpdateStatus()
@@ -2266,6 +2332,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "ADDON_LOADED" and arg1 == "Blizzard_AuctionHouseUI" then
     HookAuctionHouseFrame()
   elseif event == "UPDATE_BINDINGS" then
+    RefreshBuyHotkeyCache()
     RefreshBuyButtonText()
     RefreshOverrideBindings()
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
@@ -2364,22 +2431,25 @@ f:SetScript("OnEvent", function(_, event, arg1)
         end
       end
     end
-    table.sort(tiers, function(a, b) return a.price < b.price end)
     state.lastSeenByItem = state.lastSeenByItem or {}
-    state.lastSeenByItem[itemID] = {
-      lowestPrice = lowestSeen,
-      availBelow = totalAvail,
-      updatedAt = GetTime(),
-    }
+    local prevSeen = state.lastSeenByItem[itemID]
+    local prevLowest = prevSeen and prevSeen.lowestPrice
+    local prevAvail = prevSeen and prevSeen.availBelow or 0
+    state.lastSeenByItem[itemID] = prevSeen or {}
+    state.lastSeenByItem[itemID].lowestPrice = lowestSeen
+    state.lastSeenByItem[itemID].availBelow = totalAvail
+    state.lastSeenByItem[itemID].updatedAt = GetTime()
+
     if minUnitPrice and totalAvail > 0 then
-      local info = C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
+      table.sort(tiers, function(a, b) return a.price < b.price end)
+      local _, cachedName = GetItemVisuals(itemID)
       SetPendingDeal({
         itemID = itemID,
         isCommodity = true,
         unitPrice = minUnitPrice,
         qty = totalAvail,
         maxPrice = maxPrice,
-        name = info and info.itemName or nil,
+        name = cachedName,
         stage = "ready",
         exactCostForQty = function(wantQty)
           local rem = wantQty
@@ -2395,6 +2465,10 @@ f:SetScript("OnEvent", function(_, event, arg1)
       })
       RenderWatchlist()
     else
+      -- Fast zero-redraw exit when market is unchanged above limit
+      if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
+        return
+      end
       ClearPendingDeal(true)
       RenderWatchlist()
       if lowestSeen then

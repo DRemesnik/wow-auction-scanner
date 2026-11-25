@@ -2,7 +2,7 @@
 ## Title: Goblin Broker: Forever Sniper
 ## Notes: Legal 1-click AH sniper synced from Goblin Broker: Forever
 ## Author: Goblin Broker: Forever
-## Version: 2.2.2.20
+## Version: 2.3.0.21
 ## SavedVariables: ForeverSniperDB
 
 ForeverSniper.lua
