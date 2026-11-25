@@ -834,6 +834,10 @@ def render_dashboard_html(data: dict) -> str:
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<meta name="app-build" content="{html.escape(__version__)}|{html.escape(str(snap_time))}" />
 <title>Forever Observatory — WoW: Forever EU Орда</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2300B4D8'/%3E%3Cstop offset='100%25' stop-color='%232AB86F'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7' fill='%230B0F17'/%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='url(%23g)' opacity='0.18' stroke='url(%23g)' stroke-width='2'/%3E%3Cpath d='M7 21l6-6 4 4 8-9' fill='none' stroke='%2300B4D8' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='25' cy='10' r='2.5' fill='%232AB86F'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -1679,6 +1683,25 @@ document.querySelectorAll(".quick-pill[data-id], .dt-bar-row[data-id]").forEach(
 }});
 
 renderTable();
+
+if (location.protocol.startsWith("http")) {{
+  const curMeta = document.querySelector('meta[name="app-build"]')?.content || "";
+  const checkFresh = async () => {{
+    try {{
+      const res = await fetch(location.pathname + "?_cb=" + Date.now(), {{ cache: "no-store" }});
+      if (!res.ok) return;
+      const htmlTxt = await res.text();
+      const m = htmlTxt.match(/<meta\s+name="app-build"\s+content="([^"]+)"/i);
+      if (m && m[1] && curMeta && m[1] !== curMeta) {{
+        const u = new URL(location.href);
+        u.searchParams.set("v", m[1].replace(/[^a-zA-Z0-9._-]/g, ""));
+        location.replace(u.toString());
+      }}
+    }} catch (_e) {{}}
+  }};
+  setTimeout(checkFresh, 2500);
+  setInterval(checkFresh, 300000);
+}}
 </script>
 </body>
 </html>
