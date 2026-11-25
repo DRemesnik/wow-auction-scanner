@@ -964,7 +964,7 @@ def render_dashboard_html(data: dict) -> str:
   .sig-snipe {{ background: rgba(0, 180, 216, 0.14); color: #00B4D8; border: 1px solid rgba(0, 180, 216, 0.38); }}
   .sig-low {{ background: rgba(245, 158, 11, 0.14); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.38); }}
   .sig-bad {{ background: rgba(239, 68, 68, 0.12); color: #EF4444; border: 1px solid rgba(239, 68, 68, 0.32); }}
-  .workspace-split {{ display: grid; grid-template-columns: minmax(0, 1.72fr) minmax(380px, 460px); gap: 16px; align-items: start; }}
+  .workspace-split {{ display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(460px, 560px); gap: 16px; align-items: start; }}
   #inspectorSection {{ position: sticky; top: 68px; }}
   .inspector-grid {{ display: flex; flex-direction: column; gap: 12px; }}
   .insp-metrics {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }}
@@ -1197,7 +1197,7 @@ def render_dashboard_html(data: dict) -> str:
               <div id="chartTitle" style="font-weight:600; font-size:13.5px;">Выберите предмет</div>
               <div id="chartLegend" style="display:flex; gap:10px; flex-wrap:wrap; font-size:11.5px; color:var(--muted);"></div>
             </div>
-            <svg id="dynSvg" viewBox="0 0 820 260" style="width:100%; height:245px; display:block; overflow:visible;"></svg>
+            <svg id="dynSvg" viewBox="0 0 520 265" style="width:100%; height:265px; display:block; overflow:visible;"></svg>
             <div id="chartTooltip" style="position:absolute; display:none; pointer-events:none; background:rgba(13,17,28,0.96); border:1px solid var(--border-strong); border-radius:8px; padding:8px 11px; font-size:11.5px; box-shadow:0 10px 24px rgba(0,0,0,0.5); z-index:20; min-width:170px;"></div>
           </div>
           <div class="card" id="inspectorDetail">
@@ -1371,7 +1371,7 @@ function drawDynamicsChart(item) {{
     return fmtCopper(c);
   }};
 
-  const W = 720, H = 148, OX = 76, OY = 16;
+  const W = 438, H = 152, OX = 66, OY = 16;
   const xAt = i => pts.length === 1 ? OX + W / 2 : OX + (i * W) / (pts.length - 1);
   const yAt = v => OY + H - ((v - minP) / spanP) * H;
 
@@ -1379,7 +1379,7 @@ function drawDynamicsChart(item) {{
     const val = Math.round(minP + t * spanP);
     const y = yAt(val);
     return `<line x1="${{OX}}" y1="${{y}}" x2="${{OX + W}}" y2="${{y}}" stroke="#1F283D" stroke-dasharray="3,4" />` +
-           `<text x="${{OX - 10}}" y="${{y + 4}}" fill="#94A3B8" font-size="10.5" font-family="Fira Code, monospace" text-anchor="end">${{fmtAxisCopper(val)}}</text>`;
+           `<text x="${{OX - 8}}" y="${{y + 4}}" fill="#CBD5E1" font-size="11.5" font-family="Fira Code, monospace" text-anchor="end">${{fmtAxisCopper(val)}}</text>`;
   }}).join("");
 
   // Supply sub-chart (bottom band: y=184..232)
@@ -1426,8 +1426,8 @@ function drawDynamicsChart(item) {{
     <circle cx="${{xAt(i)}}" cy="${{yAt(p[1])}}" r="${{rLg}}" fill="#00B4D8" stroke="#080B12" stroke-width="1.4" />
   `).join("");
 
-  // Evenly spaced non-overlapping X-axis ticks (max 6 labels)
-  const tickStep = Math.max(1, Math.ceil((pts.length - 1) / 5));
+  // Evenly spaced non-overlapping X-axis ticks (max 5 labels for crisp 520px chart)
+  const tickStep = Math.max(1, Math.ceil((pts.length - 1) / 4));
   const tickIndices = [];
   for (let i = 0; i < pts.length; i += tickStep) tickIndices.push(i);
   if (tickIndices[tickIndices.length - 1] !== pts.length - 1) {{
@@ -1446,8 +1446,8 @@ function drawDynamicsChart(item) {{
     prevDay = day;
     const x = xAt(i);
     const anchor = k === 0 && pts.length > 2 ? "start" : (k === tickIndices.length - 1 && pts.length > 2 ? "end" : "middle");
-    return `<line x1="${{x}}" y1="227" x2="${{x}}" y2="232" stroke="#334155" />` +
-           `<text x="${{x}}" y="247" fill="#94A3B8" font-size="10.5" font-family="Fira Code, monospace" text-anchor="${{anchor}}">${{txt}}</text>`;
+    return `<line x1="${{x}}" y1="227" x2="${{x}}" y2="233" stroke="#475569" />` +
+           `<text x="${{x}}" y="249" fill="#CBD5E1" font-size="11.5" font-family="Fira Code, monospace" text-anchor="${{anchor}}">${{txt}}</text>`;
   }}).join("");
   const hoverLine = `<line id="crosshair" x1="0" y1="${{OY}}" x2="0" y2="230" stroke="#00B4D8" stroke-width="1" stroke-dasharray="3,3" style="display:none;" />`;
   const hitZones = pts.map((p, i) => {{
@@ -1473,7 +1473,7 @@ function drawDynamicsChart(item) {{
         <div style="margin-top:3px; color:var(--muted);">Остаток: <b class="mono" style="color:var(--text);">${{p[4]}} шт.</b></div>
       `;
       tooltip.style.display = "block";
-      const pctX = (cx / 820) * 100;
+      const pctX = (cx / 520) * 100;
       tooltip.style.left = pctX > 65 ? "auto" : `calc(${{pctX}}% + 12px)`;
       tooltip.style.right = pctX > 65 ? `calc(${{100 - pctX}}% + 12px)` : "auto";
       tooltip.style.top = "44px";
