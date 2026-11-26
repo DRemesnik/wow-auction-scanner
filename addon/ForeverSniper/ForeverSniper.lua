@@ -61,29 +61,46 @@ local function RecordTelemetryDip(itemID, unitPrice, name)
   hb.dips = (hb.dips or 0) + 1
 end
 
-local function RecordTelemetryBuy(itemID, qty, totalCost, name, savedCopper)
+local function RecordTelemetryMarketFloor(itemID, floorPrice, name)
+  if not itemID or not floorPrice or floorPrice <= 0 then return end
+  local t = EnsureTelemetryDB()
+  local it = t.items[itemID]
+  if not it then
+    it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0, scanSum = 0, scanCnt = 0 }
+    t.items[itemID] = it
+  end
+  it.scanSum = (it.scanSum or 0) + floorPrice
+  it.scanCnt = (it.scanCnt or 0) + 1
+  if name and not it.name then it.name = name end
+end
+
+local function RecordTelemetryBuy(itemID, qty, totalCost, name, savedCopper, mktSavedCopper)
   if not itemID then return end
   local t = EnsureTelemetryDB()
   local dk = TodayKey()
   local sv = math.max(0, tonumber(savedCopper) or 0)
+  local msv = math.max(0, tonumber(mktSavedCopper) or 0)
   local d = t.days[dk]
-  if not d then d = { buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.days[dk] = d end
+  if not d then d = { buys = 0, qty = 0, spent = 0, saved = 0, mktSaved = 0, missed = 0, dips = 0 }; t.days[dk] = d end
   d.buys = (d.buys or 0) + 1
   d.qty = (d.qty or 0) + (qty or 1)
   d.spent = (d.spent or 0) + (totalCost or 0)
   d.saved = (d.saved or 0) + sv
+  d.mktSaved = (d.mktSaved or 0) + msv
   local it = t.items[itemID]
-  if not it then it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.items[itemID] = it end
+  if not it then it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, mktSaved = 0, missed = 0, dips = 0 }; t.items[itemID] = it end
   it.buys = (it.buys or 0) + 1
   it.qty = (it.qty or 0) + (qty or 1)
   it.spent = (it.spent or 0) + (totalCost or 0)
   it.saved = (it.saved or 0) + sv
+  it.mktSaved = (it.mktSaved or 0) + msv
   if name and not it.name then it.name = name end
   local hb = TouchHourBucket(t, HourKey())
   hb.buys = (hb.buys or 0) + 1
   hb.qty = (hb.qty or 0) + (qty or 1)
   hb.spent = (hb.spent or 0) + (totalCost or 0)
   hb.saved = (hb.saved or 0) + sv
+  hb.mktSaved = (hb.mktSaved or 0) + msv
 end
 
 local function RecordTelemetryMiss(itemID, name)
@@ -138,9 +155,16 @@ end
 
 local LOGO_PATH = "Interface\\AddOns\\ForeverSniper\\logo.tga"
 
-local function GetQtyCap(itemID)
+local function GetBaseQtyCap(itemID)
   if not itemID or not ForeverSniperDB.qtyLimits then return 0 end
   return tonumber(ForeverSniperDB.qtyLimits[itemID]) or 0
+end
+
+local function GetQtyCap(itemID)
+  local base = GetBaseQtyCap(itemID)
+  if base <= 0 then return 0 end
+  local bought = (ForeverSniperDB.boughtByItem and ForeverSniperDB.boughtByItem[itemID]) or 0
+  return math.max(0, base - bought)
 end
 
 local state = {
@@ -173,6 +197,28 @@ local FLAT_BACKDROP = {
   edgeSize = 1,
   insets = { left = 1, right = 1, top = 1, bottom = 1 },
 }
+
+local SHADOW_BACKDROP = {
+  bgFile = "Interface\\Buttons\\WHITE8X8",
+  edgeFile = "Interface\\AddOns\\ForeverSniper\\shadow_border.tga",
+  tile = false,
+  edgeSize = 16,
+  insets = { left = 12, right = 12, top = 12, bottom = 12 },
+}
+
+local function AttachDropShadow(owner, pad, alpha)
+  local p = pad or 12
+  local a = alpha or 0.72
+  local sh = CreateFrame("Frame", nil, owner, "BackdropTemplate")
+  sh:SetPoint("TOPLEFT", owner, "TOPLEFT", -p, p)
+  sh:SetPoint("BOTTOMRIGHT", owner, "BOTTOMRIGHT", p, -p)
+  sh:SetFrameLevel(math.max(0, (owner:GetFrameLevel() or 1) - 1))
+  sh:SetBackdrop(SHADOW_BACKDROP)
+  sh:SetBackdropColor(0, 0, 0, a * 0.55)
+  sh:SetBackdropBorderColor(0, 0, 0, a)
+  owner.dropShadow = sh
+  return sh
+end
 
 local ICON_GOLD   = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:1:0|t"
 local ICON_SILVER = "|TInterface\\MoneyFrame\\UI-SilverIcon:12:12:1:0|t"
@@ -377,10 +423,31 @@ f:SetMovable(true)
 f:EnableMouse(true)
 f:RegisterForDrag("LeftButton")
 f:SetScript("OnDragStart", f.StartMoving)
-f:SetScript("OnDragStop", f.StopMovingOrSizing)
+local function CaptureWindowPos()
+  local point, _, relPoint, x, y = f:GetPoint(1)
+  if not point then return nil end
+  return {
+    point = point,
+    relPoint = relPoint or point,
+    x = math.floor((x or 0) + 0.5),
+    y = math.floor((y or 0) + 0.5),
+  }
+end
+
+local function ApplyWindowPos(pos)
+  if type(pos) ~= "table" or not pos.point then return end
+  f:ClearAllPoints()
+  f:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+end
+
+f:SetScript("OnDragStop", function(self)
+  self:StopMovingOrSizing()
+  ForeverSniperDB.windowPos = CaptureWindowPos()
+end)
 f:SetBackdrop(FLAT_BACKDROP)
 f:SetBackdropColor(0.043, 0.067, 0.125, 1) -- #0B1120 Goblin Broker Navy (opaque)
 f:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
+AttachDropShadow(f, 10, 0.60)
 f:Hide()
 
 -- Top 2px Gold-to-Emerald brand hairline
@@ -560,19 +627,8 @@ railDiv:SetPoint("TOPLEFT", logBtn, "BOTTOMLEFT", 4, -6)
 railDiv:SetPoint("TOPRIGHT", logBtn, "BOTTOMRIGHT", -4, -6)
 railDiv:SetColorTexture(0.20, 0.28, 0.40, 0.85)
 
--- 4. Presets & Import (shown in Full Mode)
-local presetsBtn = MakeRailButton(logBtn, -13, "Interface\\AddOns\\ForeverSniper\\rail_presets.tga", "Пресеты")
-presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.96, 0.85, 0.55 })
-presetsBtn:HookScript("OnEnter", function(self)
-  if ForeverSniperDB.railExpanded then return end
-  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-  GameTooltip:AddLine("Пресеты (шаблоны)", 0.96, 0.70, 0.03)
-  GameTooltip:AddLine("Стартовые [PRO], сохранение и экспорт", 0.85, 0.90, 0.96)
-  GameTooltip:Show()
-end)
-presetsBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
-
-local importBtn = MakeRailButton(presetsBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_import.tga", "Импорт")
+-- 4. Import (shown in Full Mode)
+local importBtn = MakeRailButton(logBtn, -13, "Interface\\AddOns\\ForeverSniper\\rail_import.tga", "Импорт")
 importBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.0, 0.71, 0.85, 0.65 }, { 0.75, 0.92, 1 })
 importBtn:HookScript("OnEnter", function(self)
   if ForeverSniperDB.railExpanded then return end
@@ -603,15 +659,27 @@ hotkeyBtn:SetScript("OnClick", function()
 end)
 
 -- ============================================================================
--- Section 1: Target Configuration Card (500px main column to the right of toolRail)
+-- Section 1: Unified Header Bar (Preset Picker + Save + Add Item)
 -- ============================================================================
+local SyncActivePresetSnapshot
+local UpdateStatus, OpenExportModal, RefreshOverrideBindings, ClearPendingDeal
+local presetBar = CreateFrame("Frame", nil, f)
+presetBar:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, 0)
+presetBar:SetPoint("TOPRIGHT", -12, -60)
+presetBar:SetHeight(26)
+
+local addToggleBtn = CreateFlatButton(nil, presetBar, 132, 22, "+ Добавить товар")
+addToggleBtn:SetPoint("RIGHT", 0, 0)
+addToggleBtn:SetColors({ 0.08, 0.13, 0.22, 1 }, { 0.13, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.98, 0.88, 0.55 })
+
 local cfgCard = CreateFrame("Frame", nil, f, "BackdropTemplate")
-cfgCard:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, 0)
-cfgCard:SetPoint("TOPRIGHT", -12, -60)
+cfgCard:SetPoint("TOPLEFT", presetBar, "BOTTOMLEFT", 0, -4)
+cfgCard:SetPoint("TOPRIGHT", presetBar, "BOTTOMRIGHT", 0, -4)
 cfgCard:SetHeight(124)
 cfgCard:SetBackdrop(FLAT_BACKDROP)
 cfgCard:SetBackdropColor(0.067, 0.094, 0.153, 1)
 cfgCard:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
+cfgCard:Hide()
 
 local iconFrame = CreateFrame("Button", nil, cfgCard, "BackdropTemplate")
 iconFrame:SetSize(38, 38)
@@ -755,11 +823,14 @@ local function ApplyPreviewItemID(itemID)
   return true
 end
 
+local SetCfgOpen
+
 local function PreviewDraggedItem()
   if not GetCursorInfo then return false end
   local kind, itemID = GetCursorInfo()
   if kind == "item" and itemID then
     ClearCursor()
+    if SetCfgOpen then SetCfgOpen(true) end
     return ApplyPreviewItemID(itemID)
   end
   return false
@@ -781,77 +852,159 @@ iconFrame:SetScript("OnEnter", function(self)
 end)
 
 -- ============================================================================
--- Section 2: Watchlist Overview (Quick glance & click-to-select)
+-- Section 2: Preset Selector & Update CTA inside Header Bar
 -- ============================================================================
-local trackBtn = CreateFlatButton(nil, f, 146, 20, DOT_GRAY .. " Выбрано: 0")
-trackBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -6)
-
-local wlSaveBtn = CreateFlatButton(nil, f, 54, 20, "Сохр.")
-wlSaveBtn:SetPoint("RIGHT", trackBtn, "LEFT", -6, 0)
-wlSaveBtn:SetColors({ 0.02, 0.42, 0.30, 1 }, { 0.04, 0.56, 0.40, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
-wlSaveBtn:Hide()
-
-local wlHeader = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-wlHeader:SetPoint("LEFT", cfgCard, "BOTTOMLEFT", 2, -16)
-wlHeader:SetPoint("RIGHT", wlSaveBtn, "LEFT", -6, 0)
-wlHeader:SetJustifyH("LEFT")
-wlHeader:SetWordWrap(false)
-wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
-
-local function RefreshTrackBtn()
-  local total = state.allItems and #state.allItems or 0
-  local active = state.queue and #state.queue or 0
-  if total == 0 then
-    trackBtn:SetLabel(DOT_GRAY .. " Нет целей")
-    trackBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
-  elseif active > 1 then
-    trackBtn:SetLabel(DOT_GREEN .. string.format(" По кругу: %d/%d", active, total))
-    trackBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
-  elseif active == 1 then
-    trackBtn:SetLabel(DOT_AMBER .. string.format(" Фокус: 1/%d", total))
-    trackBtn:SetColors({ 0.16, 0.13, 0.04, 1 }, { 0.24, 0.19, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.99, 0.88, 0.45 })
-  else
-    trackBtn:SetLabel(DOT_GRAY .. string.format(" Выбрано: 0/%d", total))
-    trackBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
-  end
-end
-
-trackBtn:SetScript("OnClick", function()
-  local all = state.allItems or {}
-  if #all == 0 then return end
-  ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
-  local active = state.queue and #state.queue or 0
-  if active < #all then
-    for _, id in ipairs(all) do ForeverSniperDB.tracked[id] = true end
-  elseif #all > 1 then
-    local keep = ForeverSniperDB.selectedID or all[1]
-    for _, id in ipairs(all) do ForeverSniperDB.tracked[id] = (id == keep) end
-  end
-  if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
-  UpdateStatus()
-end)
-
-trackBtn:SetScript("OnEnter", function(self)
+local presetPickerBtn = CreateFlatButton(nil, presetBar, 214, 22, "Шаблон: не выбран")
+presetPickerBtn:SetPoint("LEFT", 0, 0)
+presetPickerBtn.label:SetJustifyH("LEFT")
+presetPickerBtn.label:ClearAllPoints()
+presetPickerBtn.label:SetPoint("LEFT", 10, 0)
+presetPickerBtn.label:SetPoint("RIGHT", -22, 0)
+presetPickerBtn.arrow = presetPickerBtn:CreateTexture(nil, "OVERLAY")
+presetPickerBtn.arrow:SetSize(10, 10)
+presetPickerBtn.arrow:SetPoint("RIGHT", -7, 0)
+presetPickerBtn.arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
+presetPickerBtn.arrow:SetTexCoord(0, 1, 0, 1)
+presetPickerBtn.arrow:SetVertexColor(0.75, 0.82, 0.92, 0.9)
+presetPickerBtn:SetColors({ 0.06, 0.09, 0.16, 1 }, { 0.10, 0.15, 0.25, 1 }, { 0.20, 0.28, 0.40, 0.85 }, { 0.96, 0.85, 0.45 })
+presetPickerBtn:HookScript("OnEnter", function(self)
+  if not GameTooltip then return end
   GameTooltip:SetOwner(self, "ANCHOR_TOP")
-  GameTooltip:AddLine("Режим обхода (по моноклям)", 0.96, 0.70, 0.03)
-  GameTooltip:AddLine("Если включено 2+ глаза — сканер автоматически", 0.85, 0.90, 0.96, true)
-  GameTooltip:AddLine("идёт по кругу. Если 1 — бьёт в одну цель.", 0.85, 0.90, 0.96, true)
-  GameTooltip:AddLine("Клик: включить все глаза / фокус на текущем.", 0.60, 0.72, 0.84, true)
+  GameTooltip:AddLine("Выбор и управление шаблонами", 0.96, 0.70, 0.03)
+  if ForeverSniperDB.autoScan then
+    GameTooltip:AddLine("Недоступно во время сканирования — нажмите Пауза.", 0.95, 0.40, 0.45, true)
+  else
+    GameTooltip:AddLine("Клик: открыть список шаблонов (выбрать, создать, удалить).", 0.85, 0.90, 0.96, true)
+  end
   GameTooltip:Show()
 end)
-trackBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+presetPickerBtn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+
+local wlSaveBtn = CreateFlatButton(nil, presetBar, 104, 22, "• Обновить")
+wlSaveBtn:SetPoint("LEFT", presetPickerBtn, "RIGHT", 6, 0)
+wlSaveBtn:SetColors({ 0.02, 0.44, 0.30, 1 }, { 0.04, 0.58, 0.40, 1 }, { 0.92, 0.70, 0.03, 0.95 }, { 1, 0.98, 0.85 })
+wlSaveBtn:Hide()
+wlSaveBtn:HookScript("OnEnter", function(self)
+  if not GameTooltip then return end
+  local ap = ForeverSniperDB.activePreset
+  local p = ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap]
+  if not p then return end
+  GameTooltip:SetOwner(self, "ANCHOR_TOP")
+  GameTooltip:AddLine("Обновить шаблон «" .. ap .. "»", 0.96, 0.70, 0.03)
+  local curWL, preWL = ForeverSniperDB.watchlist or {}, p.watchlist or {}
+  local curQty, preQty = ForeverSniperDB.qtyLimits or {}, p.qtyLimits or {}
+  local shown = 0
+  for id, price in pairs(curWL) do
+    if not preWL[id] then
+      local _, iname = GetItemVisuals(id)
+      GameTooltip:AddDoubleLine("+ " .. iname, FormatCoinsPlain(price), 0.0, 0.82, 0.95, 0.85, 0.92, 0.98)
+      shown = shown + 1
+    elseif preWL[id] ~= price or (curQty[id] or 0) ~= (preQty[id] or 0) then
+      local _, iname = GetItemVisuals(id)
+      GameTooltip:AddDoubleLine("~ " .. iname, FormatCoinsPlain(preWL[id]) .. " -> " .. FormatCoinsPlain(price), 0.96, 0.70, 0.03, 0.98, 0.92, 0.70)
+      shown = shown + 1
+    end
+    if shown >= 8 then break end
+  end
+  for id in pairs(preWL) do
+    if not curWL[id] and shown < 10 then
+      local _, iname = GetItemVisuals(id)
+      GameTooltip:AddLine("- Удалён: " .. iname, 0.95, 0.40, 0.45)
+      shown = shown + 1
+    end
+  end
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine("Клик: сохранить текущие товары и цены в шаблон", 0.06, 0.85, 0.55)
+  GameTooltip:Show()
+end)
+wlSaveBtn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 
 local wlBox = CreateFrame("Frame", nil, f, "BackdropTemplate")
-wlBox:SetPoint("TOPLEFT", cfgCard, "BOTTOMLEFT", 0, -29)
-wlBox:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -29)
-wlBox:SetHeight(178)
+wlBox:SetPoint("TOPLEFT", presetBar, "BOTTOMLEFT", 0, -6)
+wlBox:SetPoint("TOPRIGHT", presetBar, "BOTTOMRIGHT", 0, -6)
+wlBox:SetHeight(112)
 wlBox:SetBackdrop(FLAT_BACKDROP)
 wlBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
 wlBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
+wlBox:EnableMouse(true)
+wlBox:SetScript("OnReceiveDrag", PreviewDraggedItem)
+
+do
+  local colHdr = CreateFrame("Frame", nil, wlBox)
+  colHdr:SetPoint("TOPLEFT", 6, -5)
+  colHdr:SetPoint("TOPRIGHT", -6, -5)
+  colHdr:SetHeight(16)
+  local c1 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  c1:SetPoint("LEFT", 36, 0); c1:SetText("|cff64748bТовар|r")
+  local c2 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  c2:SetPoint("LEFT", 190, 0); c2:SetText("|cff64748bЛимит|r")
+  local c3 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  c3:SetPoint("LEFT", 278, 0); c3:SetText("|cff64748bАХ мин.|r")
+  local c4 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  c4:SetPoint("RIGHT", -28, 0); c4:SetText("|cff64748bОсталось|r")
+end
+
+local isCfgOpen = false
+local isCfgNewMode = false
+local function ResetManualInputs()
+  idInput:SetText("")
+  goldInput:SetText("")
+  silverInput:SetText("")
+  copperInput:SetText("")
+  maxQtyLimitInput:SetText("")
+  itemIcon:SetTexture(134400)
+  iconFrame:SetBackdropBorderColor(0.25, 0.33, 0.45, 1)
+  targetNameText:SetText("Новый предмет")
+  targetNameText:SetTextColor(0.85, 0.90, 0.96)
+  targetSubText:SetText("|cff64748bПеретащите предмет из сумки или введите ID|r")
+  setTargetBtn:SetLabel("Добавить")
+end
+
+local function SyncAdaptiveLayout()
+  if ForeverSniperDB.miniMode then return end
+  local rowsVis = isCfgOpen and 6 or 10
+  local boxH = 34 + rowsVis * 34
+  wlBox:SetHeight(boxH)
+  f:SetHeight((isCfgOpen and 416 or 286) + boxH)
+end
+
+SetCfgOpen = function(open)
+  isCfgOpen = not not open
+  if ForeverSniperDB.miniMode then
+    cfgCard:Hide()
+    return
+  end
+  wlBox:ClearAllPoints()
+  if isCfgOpen then
+    cfgCard:Show()
+    wlBox:SetPoint("TOPLEFT", cfgCard, "BOTTOMLEFT", 0, -6)
+    wlBox:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -6)
+    addToggleBtn:SetLabel("- Скрыть форму")
+    addToggleBtn:SetColors({ 0.24, 0.18, 0.04, 1 }, { 0.36, 0.26, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.9 }, { 1, 0.94, 0.75 })
+  else
+    cfgCard:Hide()
+    wlBox:SetPoint("TOPLEFT", presetBar, "BOTTOMLEFT", 0, -6)
+    wlBox:SetPoint("TOPRIGHT", presetBar, "BOTTOMRIGHT", 0, -6)
+    addToggleBtn:SetLabel("+ Добавить товар")
+    addToggleBtn:SetColors({ 0.08, 0.13, 0.22, 1 }, { 0.13, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.98, 0.88, 0.55 })
+  end
+  SyncAdaptiveLayout()
+end
+
+addToggleBtn:SetScript("OnClick", function()
+  if not isCfgOpen then
+    isCfgNewMode = true
+    ResetManualInputs()
+    SetCfgOpen(true)
+  else
+    isCfgNewMode = false
+    SetCfgOpen(false)
+  end
+end)
 
 local wlScroll = CreateFrame("ScrollFrame", "ForeverSniperWLScroll", wlBox, "UIPanelScrollFrameTemplate")
-wlScroll:SetPoint("TOPLEFT", 4, -4)
-wlScroll:SetPoint("BOTTOMRIGHT", -12, 4)
+wlScroll:SetPoint("TOPLEFT", 6, -24)
+wlScroll:SetPoint("BOTTOMRIGHT", -12, 6)
 
 -- Hide Blizzard's clunky medieval scroll arrows and use a sleek flat thumb
 local wlScrollBar = _G["ForeverSniperWLScrollScrollBar"]
@@ -955,12 +1108,58 @@ execRow:SetPoint("TOPLEFT", dealCard, "BOTTOMLEFT", 0, -8)
 execRow:SetPoint("TOPRIGHT", dealCard, "BOTTOMRIGHT", 0, -8)
 execRow:SetHeight(28)
 
-local scanBtn = CreateFlatButton("ForeverSniperScanBtn", execRow, 246, 28, "Старт скан")
+local scanBtn = CreateFlatButton("ForeverSniperScanBtn", execRow, 188, 28, "Старт скан")
 scanBtn:SetPoint("LEFT", 0, 0)
 
-local skipBtn = CreateFlatButton(nil, execRow, 246, 28, "Сброс лота")
+local trackBtn = CreateFlatButton(nil, execRow, 158, 28, DOT_GRAY .. " Выбрано: 0")
+trackBtn:SetPoint("LEFT", scanBtn, "RIGHT", 6, 0)
+
+local skipBtn = CreateFlatButton(nil, execRow, 142, 28, "Сброс лота")
 skipBtn:SetPoint("RIGHT", 0, 0)
 skipBtn:SetFlatEnabled(false)
+
+local function RefreshTrackBtn()
+  local total = state.allItems and #state.allItems or 0
+  local active = state.queue and #state.queue or 0
+  if total == 0 then
+    trackBtn:SetLabel(DOT_GRAY .. " Нет целей")
+    trackBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
+  elseif active > 1 then
+    trackBtn:SetLabel(DOT_GREEN .. string.format(" По кругу: %d/%d", active, total))
+    trackBtn:SetColors({ 0.07, 0.10, 0.17, 1 }, { 0.12, 0.17, 0.27, 1 }, { 0.18, 0.25, 0.36, 0.85 }, { 0.85, 0.92, 0.98 })
+  elseif active == 1 then
+    trackBtn:SetLabel(DOT_AMBER .. string.format(" Фокус: 1/%d", total))
+    trackBtn:SetColors({ 0.07, 0.10, 0.17, 1 }, { 0.12, 0.17, 0.27, 1 }, { 0.18, 0.25, 0.36, 0.85 }, { 0.96, 0.86, 0.55 })
+  else
+    trackBtn:SetLabel(DOT_GRAY .. string.format(" Выбрано: 0/%d", total))
+    trackBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
+  end
+end
+
+trackBtn:SetScript("OnClick", function()
+  local all = state.allItems or {}
+  if #all == 0 then return end
+  ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+  local active = state.queue and #state.queue or 0
+  if active < #all then
+    for _, id in ipairs(all) do ForeverSniperDB.tracked[id] = true end
+  elseif #all > 1 then
+    local keep = ForeverSniperDB.selectedID or all[1]
+    for _, id in ipairs(all) do ForeverSniperDB.tracked[id] = (id == keep) end
+  end
+  if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+  UpdateStatus()
+end)
+
+trackBtn:SetScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_TOP")
+  GameTooltip:AddLine("Режим обхода сканера (по моноклям)", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Если включено 2+ глаза — сканер автоматически", 0.85, 0.90, 0.96, true)
+  GameTooltip:AddLine("идёт по кругу. Если 1 — бьёт в одну цель.", 0.85, 0.90, 0.96, true)
+  GameTooltip:AddLine("Клик: включить все глаза / фокус на текущем.", 0.60, 0.72, 0.84, true)
+  GameTooltip:Show()
+end)
+trackBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", f, 500, 46, "Нет активного лота")
 buyBtn:SetPoint("TOPLEFT", execRow, "BOTTOMLEFT", 0, -8)
@@ -982,7 +1181,7 @@ local logCloseBtn, logClearBtn, logExportBtn
 local tabSessionBtn, tabItemsBtn, tabDaysBtn, tabHoursBtn
 
 do
-logFrame:SetSize(572, 596)
+logFrame:SetSize(740, 596)
 logFrame:SetPoint("CENTER")
 logFrame:SetFrameStrata("DIALOG")
 logFrame:SetToplevel(true)
@@ -995,6 +1194,7 @@ logFrame:SetScript("OnDragStop", logFrame.StopMovingOrSizing)
 logFrame:SetBackdrop(FLAT_BACKDROP)
 logFrame:SetBackdropColor(0.043, 0.067, 0.125, 1)
 logFrame:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
+AttachDropShadow(logFrame, 14, 0.80)
 logFrame:Hide()
 
 local logAccent = logFrame:CreateTexture(nil, "ARTWORK")
@@ -1021,13 +1221,13 @@ logExportBtn = CreateFlatButton(nil, logFrame, 118, 24, "Экспорт отчё
 logExportBtn:SetPoint("RIGHT", logClearBtn, "LEFT", -6, 0)
 logExportBtn:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
 
-tabSessionBtn = CreateFlatButton(nil, logFrame, 130, 22, "Сессия")
+tabSessionBtn = CreateFlatButton(nil, logFrame, 172, 22, "Сессия")
 tabSessionBtn:SetPoint("TOPLEFT", 14, -44)
-tabItemsBtn = CreateFlatButton(nil, logFrame, 130, 22, "По товарам")
+tabItemsBtn = CreateFlatButton(nil, logFrame, 172, 22, "По товарам")
 tabItemsBtn:SetPoint("LEFT", tabSessionBtn, "RIGHT", 8, 0)
-tabDaysBtn = CreateFlatButton(nil, logFrame, 130, 22, "По дням")
+tabDaysBtn = CreateFlatButton(nil, logFrame, 172, 22, "По дням")
 tabDaysBtn:SetPoint("LEFT", tabItemsBtn, "RIGHT", 8, 0)
-tabHoursBtn = CreateFlatButton(nil, logFrame, 130, 22, "По часам (24ч)")
+tabHoursBtn = CreateFlatButton(nil, logFrame, 172, 22, "По часам (24ч)")
 tabHoursBtn:SetPoint("LEFT", tabDaysBtn, "RIGHT", 8, 0)
 
 -- 3 KPI Summary Cards (Qty, Total Spent, Weighted Avg / Win-Rate)
@@ -1063,9 +1263,9 @@ local function CreateKpiCard(xOffset, w, labelTxt, accentR, accentG, accentB)
   return c
 end
 
-local kpiQtyCard   = CreateKpiCard(14,  176, "КУПЛЕНО (СДЕЛОК)", 0.0,  0.71, 0.85)
-local kpiSpentCard = CreateKpiCard(198, 176, "ВСЕГО ПОТРАЧЕНО",  0.92, 0.70, 0.03)
-local kpiAvgCard   = CreateKpiCard(382, 176, "СРЕДНЯЯ ЗА ШТУКУ", 0.06, 0.73, 0.51)
+local kpiQtyCard   = CreateKpiCard(14,  232, "КУПЛЕНО (СДЕЛОК)", 0.0,  0.71, 0.85)
+local kpiSpentCard = CreateKpiCard(254, 232, "ВСЕГО ПОТРАЧЕНО",  0.92, 0.70, 0.03)
+local kpiAvgCard   = CreateKpiCard(494, 232, "СРЕДНЯЯ ЗА ШТУКУ", 0.06, 0.73, 0.51)
 
 -- Grouped Per-Item Summary Section (Session tab)
 local sumSectionHdr = logFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1098,7 +1298,7 @@ if sumScrollBar then
 end
 
 local sumContent = CreateFrame("Frame", nil, sumScroll)
-sumContent:SetSize(522, 96)
+sumContent:SetSize(688, 96)
 sumScroll:SetScrollChild(sumContent)
 local sumRows = {}
 
@@ -1120,15 +1320,15 @@ logColHdr:SetBackdropColor(0.067, 0.094, 0.153, 1)
 logColHdr:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
 
 local chTime = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chTime:SetPoint("LEFT", 8, 0); chTime:SetWidth(52); chTime:SetJustifyH("LEFT"); chTime:SetText("|cff94a3b8Время|r")
+chTime:SetPoint("LEFT", 8, 0); chTime:SetWidth(56); chTime:SetJustifyH("LEFT"); chTime:SetText("|cff94a3b8Время|r")
 local chItem = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chItem:SetPoint("LEFT", chTime, "RIGHT", 6, 0); chItem:SetWidth(218); chItem:SetJustifyH("LEFT"); chItem:SetText("|cff94a3b8Предмет|r")
+chItem:SetPoint("LEFT", chTime, "RIGHT", 6, 0); chItem:SetWidth(330); chItem:SetJustifyH("LEFT"); chItem:SetText("|cff94a3b8Предмет|r")
 local chQty = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chQty:SetPoint("LEFT", chItem, "RIGHT", 6, 0); chQty:SetWidth(44); chQty:SetJustifyH("RIGHT"); chQty:SetText("|cff94a3b8Шт|r")
+chQty:SetPoint("LEFT", chItem, "RIGHT", 6, 0); chQty:SetWidth(54); chQty:SetJustifyH("RIGHT"); chQty:SetText("|cff94a3b8Шт|r")
 local chUnit = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chUnit:SetPoint("LEFT", chQty, "RIGHT", 6, 0); chUnit:SetWidth(80); chUnit:SetJustifyH("RIGHT"); chUnit:SetText("|cff94a3b8За шт|r")
+chUnit:SetPoint("LEFT", chQty, "RIGHT", 6, 0); chUnit:SetWidth(98); chUnit:SetJustifyH("RIGHT"); chUnit:SetText("|cff94a3b8За шт|r")
 local chTotal = logColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-chTotal:SetPoint("RIGHT", -16, 0); chTotal:SetWidth(82); chTotal:SetJustifyH("RIGHT"); chTotal:SetText("|cff94a3b8Итого|r")
+chTotal:SetPoint("RIGHT", -16, 0); chTotal:SetWidth(104); chTotal:SetJustifyH("RIGHT"); chTotal:SetText("|cff94a3b8Итого|r")
 
 local logBox = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
 logBox:SetPoint("TOPLEFT", logColHdr, "BOTTOMLEFT", 0, -2)
@@ -1155,7 +1355,7 @@ if logScrollBar then
 end
 
 local logContent = CreateFrame("Frame", nil, logScroll)
-logContent:SetSize(522, 290)
+logContent:SetSize(688, 290)
 logScroll:SetScrollChild(logContent)
 local logRows = {}
 
@@ -1174,15 +1374,19 @@ anaColHdr:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
 anaColHdr:Hide()
 
 local ac1 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-ac1:SetPoint("LEFT", 12, 0); ac1:SetWidth(146); ac1:SetJustifyH("LEFT")
+ac1:SetPoint("LEFT", 12, 0); ac1:SetWidth(148); ac1:SetJustifyH("LEFT")
 local ac2 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-ac2:SetPoint("LEFT", ac1, "RIGHT", 6, 0); ac2:SetWidth(76); ac2:SetJustifyH("RIGHT")
+ac2:SetPoint("LEFT", ac1, "RIGHT", 6, 0); ac2:SetWidth(74); ac2:SetJustifyH("RIGHT")
 local ac3 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-ac3:SetPoint("LEFT", ac2, "RIGHT", 6, 0); ac3:SetWidth(86); ac3:SetJustifyH("RIGHT")
+ac3:SetPoint("LEFT", ac2, "RIGHT", 6, 0); ac3:SetWidth(80); ac3:SetJustifyH("RIGHT")
 local ac4 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-ac4:SetPoint("LEFT", ac3, "RIGHT", 6, 0); ac4:SetWidth(76); ac4:SetJustifyH("RIGHT")
+ac4:SetPoint("LEFT", ac3, "RIGHT", 6, 0); ac4:SetWidth(84); ac4:SetJustifyH("RIGHT")
 local ac5 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-ac5:SetPoint("RIGHT", -24, 0); ac5:SetWidth(96); ac5:SetJustifyH("RIGHT")
+ac5:SetPoint("LEFT", ac4, "RIGHT", 6, 0); ac5:SetWidth(84); ac5:SetJustifyH("RIGHT")
+local ac6 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ac6:SetPoint("LEFT", ac5, "RIGHT", 6, 0); ac6:SetWidth(64); ac6:SetJustifyH("RIGHT")
+local ac7 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ac7:SetPoint("RIGHT", -20, 0); ac7:SetWidth(98); ac7:SetJustifyH("RIGHT")
 
 local anaBox = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
 anaBox:SetPoint("TOPLEFT", anaColHdr, "BOTTOMLEFT", 0, -2)
@@ -1212,7 +1416,7 @@ if anaScrollBar then
 end
 
 local anaContent = CreateFrame("Frame", nil, anaScroll)
-anaContent:SetSize(522, 380)
+anaContent:SetSize(688, 380)
 anaScroll:SetScrollChild(anaContent)
 local anaRows = {}
 
@@ -1243,7 +1447,44 @@ local function GetAnaRow(i)
   local row = anaRows[i]
   if not row then
     row = CreateFrame("Frame", nil, anaContent, "BackdropTemplate")
-    row:SetSize(518, 24); row:SetBackdrop(FLAT_BACKDROP); row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
+    row:SetSize(684, 24); row:SetBackdrop(FLAT_BACKDROP); row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
+    row:EnableMouse(true)
+    row:SetScript("OnEnter", function(self)
+      if not GameTooltip or not self.roiItemID then return end
+      local t = EnsureTelemetryDB()
+      local it = t.items and t.items[self.roiItemID]
+      if not it then return end
+      local _, iname = GetItemVisuals(self.roiItemID)
+      local qty = it.qty or 0
+      local avgU = (qty > 0) and math.floor((it.spent or 0) / qty) or 0
+      local avgFloor = ((it.scanCnt or 0) > 0) and math.floor((it.scanSum or 0) / it.scanCnt) or 0
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:AddLine("|cfff59e0b" .. (it.name or iname) .. " — ROI Аналитика|r")
+      if avgFloor > 0 then
+        local netResale = math.floor(avgFloor * 0.95)
+        GameTooltip:AddDoubleLine("Ср. мин. АХ (рынок):", FormatCoinsPlain(avgFloor), 0.85, 0.90, 0.96, 0.96, 0.85, 0.45)
+        GameTooltip:AddDoubleLine("Выручка после 5% АХ:", FormatCoinsPlain(netResale), 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
+        if avgU > 0 then
+          local netUnit = netResale - avgU
+          local netTot = netUnit * qty
+          local roi = math.floor((netUnit / avgU) * 100 + 0.5)
+          local rc = roi > 0 and {0.06, 0.85, 0.55} or {0.95, 0.35, 0.40}
+          GameTooltip:AddDoubleLine("Ср. цена покупки:", FormatCoinsPlain(avgU), 0.85, 0.90, 0.96, 1, 1, 1)
+          GameTooltip:AddDoubleLine("Чистый ROI (после 5%):", string.format("%+d%%", roi), 0.85, 0.90, 0.96, rc[1], rc[2], rc[3])
+          GameTooltip:AddDoubleLine("Чистая прибыль (" .. qty .. " шт):", (netTot >= 0 and "+" or "-") .. FormatCoinsPlain(math.abs(netTot)), 0.85, 0.90, 0.96, rc[1], rc[2], rc[3])
+        end
+      else
+        GameTooltip:AddLine("Недостаточно сканов для расчёта рынка", 0.65, 0.72, 0.82)
+      end
+      GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    row:SetScript("OnMouseUp", function(self, btn)
+      if btn == "LeftButton" and self.roiItemID then
+        selectedAnaItemID = self.roiItemID
+        RenderLogFrame()
+      end
+    end)
     row.barFill = row:CreateTexture(nil, "BACKGROUND", nil, 2)
     row.barFill:SetPoint("TOPLEFT", 1, -1)
     row.barFill:SetPoint("BOTTOMLEFT", 1, 1)
@@ -1251,10 +1492,12 @@ local function GetAnaRow(i)
     row.barFill:Hide()
     row.ico = row:CreateTexture(nil, "ARTWORK"); row.ico:SetSize(16, 16); row.ico:SetPoint("LEFT", 6, 0); row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     row.c1 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c1:SetJustifyH("LEFT"); row.c1:SetWordWrap(false)
-    row.c2 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c2:SetPoint("LEFT", row.c1, "RIGHT", 6, 0); row.c2:SetWidth(76); row.c2:SetJustifyH("RIGHT"); row.c2:SetWordWrap(false)
-    row.c3 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c3:SetPoint("LEFT", row.c2, "RIGHT", 6, 0); row.c3:SetWidth(86); row.c3:SetJustifyH("RIGHT"); row.c3:SetWordWrap(false)
-    row.c4 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c4:SetPoint("LEFT", row.c3, "RIGHT", 6, 0); row.c4:SetWidth(76); row.c4:SetJustifyH("RIGHT"); row.c4:SetWordWrap(false)
-    row.c5 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c5:SetPoint("RIGHT", -6, 0); row.c5:SetWidth(96); row.c5:SetJustifyH("RIGHT"); row.c5:SetWordWrap(false)
+    row.c2 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c2:SetPoint("LEFT", row.c1, "RIGHT", 6, 0); row.c2:SetWidth(74); row.c2:SetJustifyH("RIGHT"); row.c2:SetWordWrap(false)
+    row.c3 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c3:SetPoint("LEFT", row.c2, "RIGHT", 6, 0); row.c3:SetWidth(80); row.c3:SetJustifyH("RIGHT"); row.c3:SetWordWrap(false)
+    row.c4 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c4:SetPoint("LEFT", row.c3, "RIGHT", 6, 0); row.c4:SetWidth(84); row.c4:SetJustifyH("RIGHT"); row.c4:SetWordWrap(false)
+    row.c5 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c5:SetPoint("LEFT", row.c4, "RIGHT", 6, 0); row.c5:SetWidth(84); row.c5:SetJustifyH("RIGHT"); row.c5:SetWordWrap(false)
+    row.c6 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c6:SetPoint("LEFT", row.c5, "RIGHT", 6, 0); row.c6:SetWidth(64); row.c6:SetJustifyH("RIGHT"); row.c6:SetWordWrap(false)
+    row.c7 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c7:SetPoint("RIGHT", -6, 0); row.c7:SetWidth(98); row.c7:SetJustifyH("RIGHT"); row.c7:SetWordWrap(false)
     anaRows[i] = row
   end
   return row
@@ -1269,79 +1512,139 @@ RenderLogFrame = function()
   else
     sumSectionHdr:Hide(); sumBox:Hide(); detSectionHdr:Hide(); logColHdr:Hide(); logBox:Hide()
     anaColHdr:Show(); anaBox:Show()
+    anaBox:ClearAllPoints()
+    anaBox:SetPoint("TOPLEFT", anaColHdr, "BOTTOMLEFT", 0, -2)
+    anaBox:SetPoint("BOTTOMRIGHT", -14, 14)
   end
 
   if not isSession then
     local t = EnsureTelemetryDB()
-    local totBuys, totQty, totSpent, totSaved, totMissed, totDips = 0, 0, 0, 0, 0, 0
+    local totBuys, totQty, totSpent, totSaved, totMissed, totDips, totMktSaved = 0, 0, 0, 0, 0, 0, 0
     for _, d in pairs(t.days or {}) do
       totBuys = totBuys + (d.buys or 0)
       totQty = totQty + (d.qty or 0)
       totSpent = totSpent + (d.spent or 0)
       totSaved = totSaved + (d.saved or 0)
+      totMktSaved = totMktSaved + (d.mktSaved or 0)
       totMissed = totMissed + (d.missed or 0)
       totDips = totDips + (d.dips or 0)
     end
-    kpiQtyCard.lbl:SetText("|cff94a3b8КУПЛЕНО / СРЫВОВ|r")
-    kpiQtyCard.val:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d / %d)|r", totQty, totBuys, totMissed))
-    kpiSpentCard.lbl:SetText(totSaved > 0 and "|cff10b981ЭКОНОМИЯ ОТ ЛИМИТА|r" or "|cff94a3b8ПОТРАЧЕНО ВСЕГО|r")
-    kpiSpentCard.val:SetText(totSaved > 0 and FormatCoins(totSaved) or (totSpent > 0 and FormatCoins(totSpent) or "|cff64748b0|r" .. ICON_COPPER))
-    kpiAvgCard.lbl:SetText("|cff94a3b8WIN-RATE / ПРОСАДОК|r")
-    kpiAvgCard.val:SetText(string.format("%s |cff64748b(%d)|r", FormatWinRate(totBuys, totMissed), totDips))
+    local computedMktSaved, totNetProfit = 0, 0
+    for _, it in pairs(t.items or {}) do
+      if (it.qty or 0) > 0 and (it.scanCnt or 0) > 0 then
+        local avgFloor = math.floor((it.scanSum or 0) / it.scanCnt)
+        local avgBuy = math.floor((it.spent or 0) / it.qty)
+        if avgFloor > avgBuy then
+          computedMktSaved = computedMktSaved + (avgFloor - avgBuy) * it.qty
+        end
+        local netResale = math.floor(avgFloor * 0.95)
+        totNetProfit = totNetProfit + (netResale - avgBuy) * it.qty
+      end
+    end
+    local totalRealSaved = math.max(totMktSaved, computedMktSaved)
+
+    if totalRealSaved > 0 then
+      local roiPct = (totSpent > 0) and math.floor((totNetProfit / totSpent) * 100 + 0.5) or 0
+      local roiCol = roiPct > 0 and "|cff10b981" or "|cfff43f5e"
+      kpiQtyCard.lbl:SetText("|cff10b981СЭКОНОМЛЕНО ВСЕГО · ROI|r")
+      kpiQtyCard.val:SetFontObject("GameFontNormalLarge")
+      kpiQtyCard.val:SetText(string.format("%s %s(%+d%%)|r", FormatCoins(totalRealSaved), roiCol, roiPct))
+    elseif totSaved > 0 then
+      kpiQtyCard.lbl:SetText("|cff10b981СЭКОНОМЛЕНО ВСЕГО|r")
+      kpiQtyCard.val:SetFontObject("GameFontNormalLarge")
+      kpiQtyCard.val:SetText(FormatCoins(totSaved))
+    else
+      kpiQtyCard.lbl:SetText("|cff94a3b8СЭКОНОМЛЕНО ВСЕГО|r")
+      kpiQtyCard.val:SetFontObject("GameFontNormal")
+      kpiQtyCard.val:SetText("|cff64748b0|r" .. ICON_COPPER)
+    end
+    kpiSpentCard.lbl:SetText("|cff94a3b8КУПЛЕНО · ПОТРАЧЕНО|r")
+    kpiSpentCard.val:SetText(string.format("|cffffffff%d шт|r |cff64748b·|r %s", totQty, totSpent > 0 and FormatCoins(totSpent) or ("0" .. ICON_COPPER)))
+    kpiAvgCard.lbl:SetText("|cff94a3b8WIN-RATE / СРЫВЫ|r")
+    kpiAvgCard.val:SetText(string.format("%s |cff64748b(%d / %d)|r", FormatWinRate(totBuys, totMissed), totBuys, totMissed))
 
     for _, r in ipairs(anaRows) do r:Hide() end
     local y = 0
     if logTab == "items" then
       ac1:SetText("|cff94a3b8Предмет|r"); ac2:SetText("|cff94a3b8Куплено|r"); ac3:SetText("|cff94a3b8Срывы / WR|r")
-      ac4:SetText("|cff94a3b8Просадки|r"); ac5:SetText("|cff94a3b8Ср. цена|r")
+      ac4:SetText("|cff94a3b8Ср. мин. АХ|r"); ac5:SetText("|cff94a3b8Ср. покупка|r")
+      ac6:SetText("|cff94a3b8ROI (-5%)|r"); ac6:Show()
+      ac7:SetText("|cff94a3b8Чист. прибыль|r"); ac7:Show()
       local keys = {}
       for id in pairs(t.items or {}) do table.insert(keys, id) end
       table.sort(keys, function(a, b)
         local ia, ib = t.items[a], t.items[b]
         if (ia.spent or 0) ~= (ib.spent or 0) then return (ia.spent or 0) > (ib.spent or 0) end
-        return (ia.dips or 0) > (ib.dips or 0)
+        return (ia.scanCnt or 0) > (ib.scanCnt or 0)
       end)
       for i, id in ipairs(keys) do
         local it = t.items[id]
         local row = GetAnaRow(i)
+        row.roiItemID = id
         local icon, nm, r, g, b = GetItemVisuals(id)
-        local avgU = ((it.qty or 0) > 0) and math.floor((it.spent or 0) / it.qty) or 0
+        local qty = it.qty or 0
+        local avgU = (qty > 0) and math.floor((it.spent or 0) / qty) or 0
+        local avgFloor = ((it.scanCnt or 0) > 0) and math.floor((it.scanSum or 0) / it.scanCnt) or 0
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -y)
         row:SetBackdropColor(i % 2 == 1 and 0.055 or 0.040, i % 2 == 1 and 0.078 or 0.058, i % 2 == 1 and 0.135 or 0.105, 1)
+        row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
         row.barFill:Hide()
         row.ico:Show(); row.ico:SetTexture(icon)
-        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.c1:SetWidth(124)
+        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.c1:SetWidth(128)
         row.c1:SetText(it.name or nm); row.c1:SetTextColor(r, g, b)
-        row.c2:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", it.qty or 0, it.buys or 0))
+        row.c2:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", qty, it.buys or 0))
         row.c3:SetText(string.format("|cff64748b%d /|r %s", it.missed or 0, FormatWinRate(it.buys, it.missed)))
-        row.c4:SetText(string.format("|cfff59e0b%d|r", it.dips or 0))
+        row.c4:SetText(avgFloor > 0 and FormatCoins(avgFloor) or "|cff64748b—|r")
         row.c5:SetText(avgU > 0 and FormatCoins(avgU) or (it.minDip and FormatCoins(it.minDip) or "|cff64748b—|r"))
+        row.c6:Show(); row.c7:Show()
+        if avgU > 0 and avgFloor > 0 then
+          local netResale = math.floor(avgFloor * 0.95)
+          local netUnit = netResale - avgU
+          local netTot = netUnit * qty
+          local roi = math.floor((netUnit / avgU) * 100 + 0.5)
+          local rCol = roi > 0 and "|cff10b981" or "|cfff43f5e"
+          row.c6:SetText(string.format("%s%+d%%|r", rCol, roi))
+          row.c7:SetText(string.format("%s%s|r %s", rCol, netTot >= 0 and "+" or "-", FormatCoins(math.abs(netTot))))
+        else
+          row.c6:SetText("|cff475569—|r")
+          row.c7:SetText("|cff475569—|r")
+        end
         row:Show(); y = y + 26
       end
     elseif logTab == "days" then
       ac1:SetText("|cff94a3b8Дата|r"); ac2:SetText("|cff94a3b8Сделок|r"); ac3:SetText("|cff94a3b8Срывы / WR|r")
-      ac4:SetText("|cff94a3b8Просадок|r"); ac5:SetText("|cff94a3b8Потрачено|r")
+      ac4:SetText("|cff94a3b8Просадок|r"); ac5:SetText("|cff94a3b8Сэкономлено|r")
+      ac6:SetText(""); ac6:Hide()
+      ac7:SetText("|cff94a3b8Потрачено|r"); ac7:Show()
       local days = {}
       for dk in pairs(t.days or {}) do table.insert(days, dk) end
       table.sort(days, function(a, b) return a > b end)
       for i, dk in ipairs(days) do
         local d = t.days[dk]
         local row = GetAnaRow(i)
+        row.roiItemID = nil
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -y)
         row:SetBackdropColor(i % 2 == 1 and 0.055 or 0.040, i % 2 == 1 and 0.078 or 0.058, i % 2 == 1 and 0.135 or 0.105, 1)
+        row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
         row.barFill:Hide()
         row.ico:Hide()
-        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", 8, 0); row.c1:SetWidth(146)
+        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", 8, 0); row.c1:SetWidth(148)
         row.c1:SetText(dk); row.c1:SetTextColor(0.92, 0.96, 1)
         row.c2:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", d.qty or 0, d.buys or 0))
         row.c3:SetText(string.format("|cff64748b%d /|r %s", d.missed or 0, FormatWinRate(d.buys, d.missed)))
         row.c4:SetText(string.format("|cfff59e0b%d|r", d.dips or 0))
-        row.c5:SetText((d.spent or 0) > 0 and FormatCoins(d.spent) or "|cff64748b—|r")
+        local dSav = d.mktSaved or 0
+        if #days == 1 and totalRealSaved > dSav then dSav = totalRealSaved end
+        row.c5:SetText(dSav > 0 and ("|cff10b981+|r" .. FormatCoins(dSav)) or "|cff475569—|r")
+        row.c6:Hide()
+        row.c7:Show(); row.c7:SetText((d.spent or 0) > 0 and FormatCoins(d.spent) or "|cff64748b—|r")
         row:Show(); y = y + 26
       end
     else
       ac1:SetText("|cff94a3b8Час (24ч)|r"); ac2:SetText("|cff94a3b8Куплено|r"); ac3:SetText("|cff94a3b8Срывы / WR|r")
-      ac4:SetText("|cff94a3b8Просадок|r"); ac5:SetText("|cff94a3b8Потрачено|r")
+      ac4:SetText("|cff94a3b8Просадок|r"); ac5:SetText("|cff94a3b8Сэкономлено|r")
+      ac6:SetText(""); ac6:Hide()
+      ac7:SetText("|cff94a3b8Потрачено|r"); ac7:Show()
       local maxAct = 1
       for hr = 0, 23 do
         local h = t.hours and t.hours[hr]
@@ -1350,14 +1653,16 @@ RenderLogFrame = function()
       end
       for hr = 0, 23 do
         local i = hr + 1
-        local h = (t.hours and t.hours[hr]) or { buys = 0, qty = 0, spent = 0, missed = 0, dips = 0 }
+        local h = (t.hours and t.hours[hr]) or { buys = 0, qty = 0, spent = 0, mktSaved = 0, missed = 0, dips = 0 }
         local act = (h.dips or 0) + (h.buys or 0) + (h.missed or 0)
         local row = GetAnaRow(i)
+        row.roiItemID = nil
         row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -y)
         row:SetBackdropColor(i % 2 == 1 and 0.055 or 0.040, i % 2 == 1 and 0.078 or 0.058, i % 2 == 1 and 0.135 or 0.105, 1)
+        row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
         row.ico:Hide()
         if act > 0 then
-          row.barFill:SetWidth(math.max(6, math.floor(514 * (act / maxAct))))
+          row.barFill:SetWidth(math.max(6, math.floor(680 * (act / maxAct))))
           if act == maxAct then
             row.barFill:SetColorTexture(0.92, 0.70, 0.03, 0.24)
           else
@@ -1367,13 +1672,16 @@ RenderLogFrame = function()
         else
           row.barFill:Hide()
         end
-        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", 8, 0); row.c1:SetWidth(146)
+        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", 8, 0); row.c1:SetWidth(148)
         row.c1:SetText(string.format("%02d:00 - %02d:59", hr, hr))
         row.c1:SetTextColor(act > 0 and 0.95 or 0.45, act > 0 and 0.98 or 0.52, act > 0 and 1.0 or 0.62)
         row.c2:SetText((h.buys or 0) > 0 and string.format("|cffffffff%d шт|r |cff64748b(%d)|r", h.qty or 0, h.buys or 0) or "|cff4755690|r")
         row.c3:SetText(string.format("|cff64748b%d /|r %s", h.missed or 0, FormatWinRate(h.buys, h.missed)))
         row.c4:SetText((h.dips or 0) > 0 and string.format("|cfff59e0b%d|r", h.dips) or "|cff4755690|r")
-        row.c5:SetText((h.spent or 0) > 0 and FormatCoins(h.spent) or "|cff475569—|r")
+        local hSav = h.mktSaved or 0
+        row.c5:SetText(hSav > 0 and ("|cff10b981+|r" .. FormatCoins(hSav)) or "|cff475569—|r")
+        row.c6:Hide()
+        row.c7:Show(); row.c7:SetText((h.spent or 0) > 0 and FormatCoins(h.spent) or "|cff475569—|r")
         row:Show(); y = y + 26
       end
     end
@@ -1392,11 +1700,19 @@ RenderLogFrame = function()
   local sb = state.sessionBuys
   local totalQty = sb.totalQty or 0
   local totalCopper = sb.totalCopper or 0
+  local totalMktSaved = sb.totalMktSaved or 0
   local overallAvg = (totalQty > 0) and math.floor(totalCopper / totalQty) or 0
 
+  kpiQtyCard.val:SetFontObject("GameFontNormal")
   kpiQtyCard.val:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", totalQty, #hist))
   kpiSpentCard.val:SetText(totalCopper > 0 and FormatCoins(totalCopper) or "|cff64748b0|r" .. ICON_COPPER)
-  kpiAvgCard.val:SetText(overallAvg > 0 and FormatCoins(overallAvg) or "|cff64748b—|r")
+  if totalMktSaved > 0 then
+    kpiAvgCard.lbl:SetText("|cff10b981СЭКОНОМЛЕНО (СЕССИЯ)|r")
+    kpiAvgCard.val:SetText(FormatCoins(totalMktSaved))
+  else
+    kpiAvgCard.lbl:SetText("|cff94a3b8СРЕДНЯЯ ЗА ШТУКУ|r")
+    kpiAvgCard.val:SetText(overallAvg > 0 and FormatCoins(overallAvg) or "|cff64748b—|r")
+  end
 
   -- Aggregate per-item summary
   local byItem = {}
@@ -1479,6 +1795,37 @@ RenderLogFrame = function()
       row:SetSize(518, rowH)
       row:SetBackdrop(FLAT_BACKDROP)
       row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
+      row:EnableMouse(true)
+      row:SetScript("OnEnter", function(self)
+        local h = self.dealRef
+        if not GameTooltip or not h then return end
+        local qty = math.max(1, tonumber(h.qty) or 1)
+        local total = tonumber(h.totalCost) or 0
+        local unitAvg = math.floor(total / qty)
+        local t = EnsureTelemetryDB()
+        local it = h.itemID and t.items and t.items[h.itemID]
+        local avgFloor = (it and (it.scanCnt or 0) > 0) and math.floor((it.scanSum or 0) / it.scanCnt) or 0
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("|cfff59e0b" .. (h.name or ("Item #" .. tostring(h.itemID))) .. " x" .. qty .. "|r")
+        GameTooltip:AddDoubleLine("Куплено по:", FormatCoinsPlain(unitAvg) .. "/шт", 0.85, 0.90, 0.96, 1, 1, 1)
+        if avgFloor > 0 then
+          local netResale = math.floor(avgFloor * 0.95)
+          local netTot = (netResale - unitAvg) * qty
+          local roi = (unitAvg > 0) and math.floor(((netResale - unitAvg) / unitAvg) * 100 + 0.5) or 0
+          local rc = roi > 0 and {0.06, 0.85, 0.55} or {0.95, 0.35, 0.40}
+          GameTooltip:AddDoubleLine("Ср. мин. АХ (рынок):", FormatCoinsPlain(avgFloor), 0.85, 0.90, 0.96, 0.96, 0.85, 0.45)
+          GameTooltip:AddDoubleLine("Выручка (-5% АХ):", FormatCoinsPlain(netResale) .. "/шт", 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
+          GameTooltip:AddDoubleLine("ROI сделки:", string.format("%+d%% (%s%s)", roi, netTot >= 0 and "+" or "-", FormatCoinsPlain(math.abs(netTot))), 0.85, 0.90, 0.96, rc[1], rc[2], rc[3])
+        end
+        GameTooltip:Show()
+      end)
+      row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    row:SetScript("OnMouseUp", function(self, btn)
+      if btn == "LeftButton" and self.roiItemID then
+        selectedAnaItemID = self.roiItemID
+        RenderLogFrame()
+      end
+    end)
 
       row.t = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.t:SetPoint("LEFT", 6, 0); row.t:SetWidth(52); row.t:SetJustifyH("LEFT")
@@ -1507,6 +1854,7 @@ RenderLogFrame = function()
     local total = tonumber(h.totalCost) or 0
     local unitAvg = math.floor(total / qty)
 
+    row.dealRef = h
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", 0, -y)
     row:SetBackdropColor(idx % 2 == 1 and 0.055 or 0.040, idx % 2 == 1 and 0.078 or 0.058, idx % 2 == 1 and 0.135 or 0.105, 1)
@@ -1518,7 +1866,7 @@ RenderLogFrame = function()
     row.u:SetText(FormatCoins(unitAvg))
     row.tot:SetText(FormatCoins(total))
     row:Show()
-    y = y + rowH + 2
+    y = y + rowH + 4
   end
 
   logContent:SetHeight(math.max(220, y))
@@ -1560,30 +1908,35 @@ local function RecordCompletedPurchase(att)
   table.insert(sb.history, att)
   if #sb.history > 100 then table.remove(sb.history, 1) end
   local saved = (att.maxPrice and att.maxPrice > 0) and math.max(0, (att.maxPrice * qty) - total) or 0
-  RecordTelemetryBuy(att.itemID, qty, total, att.name, saved)
+  local t = EnsureTelemetryDB()
+  local it = t.items and t.items[att.itemID]
+  local avgFloor = (it and (it.scanCnt or 0) > 0) and math.floor((it.scanSum or 0) / it.scanCnt) or 0
+  local mktSaved = (avgFloor > 0) and math.max(0, (avgFloor * qty) - total) or 0
+  sb.totalMktSaved = (sb.totalMktSaved or 0) + mktSaved
+  RecordTelemetryBuy(att.itemID, qty, total, att.name, saved, mktSaved)
   sb.lastOutcome = string.format(DOT_GREEN .. " |cff10b981Куплено:|r x%d по %s/шт (%s)", qty, FormatCoinsPlain(unitAvg), FormatCoinsPlain(total))
   RefreshSessionBar()
 
-  -- Decrement remaining buy quantity quota (e.g. 100 - 10 = 90)
-  local oldCap = GetQtyCap(att.itemID)
-  if oldCap > 0 then
-    local remaining = math.max(0, oldCap - qty)
+  -- Track bought count separately from base qtyLimits so preset dirty-state is unaffected
+  local baseCap = GetBaseQtyCap(att.itemID)
+  if baseCap > 0 then
+    ForeverSniperDB.boughtByItem = ForeverSniperDB.boughtByItem or {}
+    local newBought = (ForeverSniperDB.boughtByItem[att.itemID] or 0) + qty
+    ForeverSniperDB.boughtByItem[att.itemID] = newBought
+    local remaining = math.max(0, baseCap - newBought)
     if remaining > 0 then
-      ForeverSniperDB.qtyLimits[att.itemID] = remaining
-      if att.itemID == ForeverSniperDB.selectedID then
-        maxQtyLimitInput:SetText(tostring(remaining))
-      end
       UpdateStatus()
     else
-      -- Keep item in watchlist & selected so user doesn't lose their setup; just pause auto-scan
-      ForeverSniperDB.qtyLimits[att.itemID] = nil
-      if att.itemID == ForeverSniperDB.selectedID then
-        maxQtyLimitInput:SetText("")
+      -- Keep item & base limit intact, turn off its monocle so it stops buying
+      ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+      ForeverSniperDB.tracked[att.itemID] = false
+      RebuildQueue()
+      if #(state.queue or {}) == 0 then
+        ForeverSniperDB.autoScan = false
+        dealBadge:SetText(DOT_GREEN .. " |cff10b981ЛИМИТ ВЫКУПЛЕН - СКАН НА ПАУЗЕ|r")
       end
-      ForeverSniperDB.autoScan = false
       UpdateStatus()
-      dealBadge:SetText(DOT_GREEN .. " |cff10b981ЛИМИТ ВЫКУПЛЕН - СКАН НА ПАУЗЕ|r")
-      print(string.format("|cff10b981Goblin Broker:|r лимит по %s выкуплен (скан поставлен на паузу).", att.name or ("Item #" .. tostring(att.itemID))))
+      print(string.format("|cff10b981Goblin Broker:|r лимит по %s выкуплен (глаз-монокль выключен).", att.name or ("Item #" .. tostring(att.itemID))))
     end
   end
 end
@@ -1607,12 +1960,13 @@ logExportBtn:SetScript("OnClick", function()
   local t = EnsureTelemetryDB()
   local lines = { "# Goblin Broker: Forever Telemetry (" .. TodayKey() .. ")" }
   for dk, d in pairs(t.days or {}) do
-    table.insert(lines, string.format("DAY;%s;buys=%d;qty=%d;missed=%d;dips=%d;spent=%d;saved=%d",
-      dk, d.buys or 0, d.qty or 0, d.missed or 0, d.dips or 0, d.spent or 0, d.saved or 0))
+    table.insert(lines, string.format("DAY;%s;buys=%d;qty=%d;missed=%d;dips=%d;spent=%d;saved=%d;mktSaved=%d",
+      dk, d.buys or 0, d.qty or 0, d.missed or 0, d.dips or 0, d.spent or 0, d.saved or 0, d.mktSaved or 0))
   end
   for id, it in pairs(t.items or {}) do
-    table.insert(lines, string.format("ITEM;%d;%s;buys=%d;qty=%d;missed=%d;dips=%d;spent=%d;minDip=%d",
-      id, it.name or "", it.buys or 0, it.qty or 0, it.missed or 0, it.dips or 0, it.spent or 0, it.minDip or 0))
+    local avgFloor = ((it.scanCnt or 0) > 0) and math.floor((it.scanSum or 0) / it.scanCnt) or 0
+    table.insert(lines, string.format("ITEM;%d;%s;buys=%d;qty=%d;missed=%d;dips=%d;spent=%d;avgFloor=%d;mktSaved=%d",
+      id, it.name or "", it.buys or 0, it.qty or 0, it.missed or 0, it.dips or 0, it.spent or 0, avgFloor, it.mktSaved or 0))
   end
   OpenExportModal("Экспорт аналитики", table.concat(lines, "\n"))
   print("|cff06b6d4Goblin Broker:|r экспорт аналитики готов — скопируйте Ctrl+C.")
@@ -1711,13 +2065,12 @@ local function ApplyMiniMode()
   local isMini = not not ForeverSniperDB.miniMode
   ApplyRailState()
   if isMini then
+    presetBar:Hide()
     cfgCard:Hide()
-    wlHeader:Hide()
     railDiv:Hide()
     importBtn:Hide()
-    presetsBtn:Hide()
-    trackBtn:Hide()
     wlBox:Hide()
+    if f.presetMenu then f.presetMenu:Hide() end
     dealCard:ClearAllPoints()
     dealCard:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, -18)
     dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -78)
@@ -1726,18 +2079,16 @@ local function ApplyMiniMode()
     miniBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.8 }, { 0.85, 1, 0.94 })
     miniBtn.railText:SetText("|cff10b981Полный вид|r")
   else
-    cfgCard:Show()
-    wlHeader:Show()
+    presetBar:Show()
     railDiv:Show()
     importBtn:Show()
-    presetsBtn:Show()
-    trackBtn:Show()
     wlBox:Show()
+    SetCfgOpen(isCfgOpen)
     f.miniContextText:Hide()
     dealCard:ClearAllPoints()
     dealCard:SetPoint("TOPLEFT", wlBox, "BOTTOMLEFT", 0, -10)
     dealCard:SetPoint("TOPRIGHT", wlBox, "BOTTOMRIGHT", 0, -10)
-    f:SetHeight(585)
+    SyncAdaptiveLayout()
     miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.85, 0.90, 0.96 })
     miniBtn.railText:SetText("Мини-режим")
   end
@@ -1795,7 +2146,7 @@ local function SyncInputsFromSelected()
     goldInput:SetText(tostring(math.floor(lim / 10000)))
     silverInput:SetText(tostring(math.floor((lim % 10000) / 100)))
     copperInput:SetText(tostring(lim % 100))
-    local cap = GetQtyCap(sel)
+    local cap = GetBaseQtyCap(sel)
     maxQtyLimitInput:SetText(cap > 0 and tostring(cap) or "")
   else
     idInput:SetText("")
@@ -1805,9 +2156,6 @@ local function SyncInputsFromSelected()
     maxQtyLimitInput:SetText("")
   end
 end
-
-local ClearPendingDeal
-local UpdateStatus
 
 local function RenderWatchlist()
   if ForeverSniperDB.miniMode or not f:IsShown() then return end
@@ -1819,11 +2167,11 @@ local function RenderWatchlist()
   if wlBox.emptyPanel then
     if #allItems == 0 then wlBox.emptyPanel:Show() else wlBox.emptyPanel:Hide() end
   end
-  local needScroll = (#allItems > 6)
-  local rowW = needScroll and 480 or 490
+  local needScroll = (#allItems > (isCfgOpen and 6 or 10))
+  local rowW = needScroll and 476 or 486
   wlContent:SetWidth(rowW)
 
-  local rowH = 26
+  local rowH = 30
   local y = 0
   for i, itemID in ipairs(allItems) do
     local row = wlRows[i]
@@ -1831,6 +2179,7 @@ local function RenderWatchlist()
       row = CreateFrame("Button", nil, wlContent, "BackdropTemplate")
       row:SetSize(rowW, rowH)
       row:SetBackdrop(FLAT_BACKDROP)
+      row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
       row.bar = row:CreateTexture(nil, "ARTWORK")
       row.bar:SetWidth(3)
@@ -1885,14 +2234,113 @@ local function RenderWatchlist()
 
       row.cap = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.cap:SetPoint("RIGHT", -28, 0)
-      row.cap:SetWidth(52)
+      row.cap:SetWidth(74)
       row.cap:SetJustifyH("RIGHT")
       row.cap:SetWordWrap(false)
       row.live:SetPoint("RIGHT", row.cap, "LEFT", -6, 0)
 
+      row.eye:SetScript("OnClick", function(self)
+        local id = self.itemID
+        if not id then return end
+        ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+        local nextState = not IsItemTracked(id)
+        ForeverSniperDB.tracked[id] = nextState
+        if not nextState and ForeverSniperDB.selectedID == id then
+          ForeverSniperDB.selectedID = nil
+        elseif nextState then
+          ForeverSniperDB.selectedID = id
+          if GetBaseQtyCap(id) > 0 and GetQtyCap(id) == 0 and ForeverSniperDB.boughtByItem then
+            ForeverSniperDB.boughtByItem[id] = nil
+          end
+        end
+        if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+        ClearPendingDeal()
+        UpdateStatus()
+        SyncInputsFromSelected()
+      end)
+
       row.del = CreateFlatButton(nil, row, 20, 20, "x")
       row.del:SetPoint("RIGHT", -4, 0)
       row.del:SetColors({ 0.12, 0.15, 0.22, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.20, 0.26, 0.36, 1 }, { 0.75, 0.80, 0.88 })
+      row.del:SetScript("OnClick", function(self)
+        local id = self.itemID
+        if not id then return end
+        ForeverSniperDB.watchlist[id] = nil
+        if ForeverSniperDB.qtyLimits then ForeverSniperDB.qtyLimits[id] = nil end
+        if ForeverSniperDB.boughtByItem then ForeverSniperDB.boughtByItem[id] = nil end
+        if ForeverSniperDB.tracked then ForeverSniperDB.tracked[id] = nil end
+        if ForeverSniperDB.selectedID == id then
+          ForeverSniperDB.selectedID = nil
+        end
+        if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+        ClearPendingDeal()
+        UpdateStatus()
+        SyncInputsFromSelected()
+      end)
+
+      row:SetScript("OnEnter", function(self)
+        if not GameTooltip or not self.itemID then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if GameTooltip.SetItemByID then GameTooltip:SetItemByID(self.itemID) end
+        if self.diffKind == "new" then
+          GameTooltip:AddLine(" ")
+          GameTooltip:AddLine("+ Новая позиция (нет в шаблоне «" .. (self.apName or "") .. "»)", 0.0, 0.82, 0.95, true)
+          GameTooltip:AddLine("Нажмите «• Обновить» сверху для сохранения.", 0.65, 0.75, 0.85, true)
+        elseif self.diffKind == "mod" then
+          GameTooltip:AddLine(" ")
+          GameTooltip:AddLine("* Отличается от шаблона «" .. (self.apName or "") .. "»:", 0.96, 0.70, 0.03, true)
+          if self.diffOldPrice ~= self.curLim then
+            GameTooltip:AddDoubleLine("Цена:", FormatCoinsPlain(self.diffOldPrice) .. " -> " .. FormatCoinsPlain(self.curLim), 0.85, 0.90, 0.96, 0.98, 0.92, 0.70)
+          end
+          if self.diffOldQty ~= self.curBaseCap then
+            local oq = (self.diffOldQty and self.diffOldQty > 0) and tostring(self.diffOldQty) or "все"
+            local cq = (self.curBaseCap and self.curBaseCap > 0) and tostring(self.curBaseCap) or "все"
+            GameTooltip:AddDoubleLine("Кол-во:", oq .. " -> " .. cq, 0.85, 0.90, 0.96, 0.98, 0.92, 0.70)
+          end
+          GameTooltip:AddLine("Нажмите «• Обновить» сверху для сохранения.", 0.65, 0.75, 0.85, true)
+        end
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("ЛКМ: выбрать цель  |  ПКМ / 2x клик: изменить цену и кол-во", 0.55, 0.65, 0.78)
+        GameTooltip:Show()
+      end)
+      row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    row:SetScript("OnMouseUp", function(self, btn)
+      if btn == "LeftButton" and self.roiItemID then
+        selectedAnaItemID = self.roiItemID
+        RenderLogFrame()
+      end
+    end)
+
+      local function OpenRowEdit(self)
+        local id = self.itemID
+        if not id then return end
+        isCfgNewMode = false
+        ForeverSniperDB.selectedID = id
+        SyncInputsFromSelected()
+        setTargetBtn:SetLabel("Сохранить")
+        ClearPendingDeal()
+        SetCfgOpen(true)
+        UpdateStatus()
+        goldInput:SetFocus()
+        if goldInput.HighlightText then goldInput:HighlightText() end
+      end
+
+      row:SetScript("OnClick", function(self, mouseBtn)
+        local id = self.itemID
+        if not id then return end
+        if mouseBtn == "RightButton" then
+          OpenRowEdit(self)
+          return
+        end
+        isCfgNewMode = false
+        ForeverSniperDB.selectedID = id
+        SyncInputsFromSelected()
+        setTargetBtn:SetLabel("Сохранить")
+        ClearPendingDeal()
+        UpdateStatus()
+      end)
+
+      row:SetScript("OnDoubleClick", OpenRowEdit)
 
       wlRows[i] = row
     end
@@ -1903,10 +2351,19 @@ local function RenderWatchlist()
     local lim = ForeverSniperDB.watchlist[itemID] or 0
     local cap = GetQtyCap(itemID)
 
+    row.dealRef = h
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", 0, -y)
     row:SetWidth(rowW)
+    row.itemID = itemID
     row.eye.itemID = itemID
+    row.del.itemID = itemID
+    row.apName = ap
+    row.diffKind = diffKind
+    row.diffOldPrice = diffOldPrice
+    row.diffOldQty = diffOldQty
+    row.curLim = lim
+    row.curBaseCap = baseCap
     if isTracked then
       row.eye:SetBackdropColor(0.04, 0.16, 0.14, 1)
       row.eye:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.9)
@@ -1924,7 +2381,30 @@ local function RenderWatchlist()
     row.name:SetText(nm)
     row.name:SetTextColor(r, g, b)
     row.name:SetAlpha(isTracked and 1 or 0.5)
-    row.price:SetText(FormatCoins(lim))
+    local ap = ForeverSniperDB.activePreset
+    local apData = ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap]
+    local baseCap = GetBaseQtyCap(itemID)
+    local remCap = GetQtyCap(itemID)
+    local diffKind, diffOldPrice, diffOldQty = nil, nil, nil
+    if apData and apData.watchlist then
+      local prePrice = apData.watchlist[itemID]
+      local preQty = (apData.qtyLimits and apData.qtyLimits[itemID]) or 0
+      if not prePrice then
+        diffKind = "new"
+      elseif prePrice ~= lim or preQty ~= baseCap then
+        diffKind = "mod"
+        diffOldPrice = prePrice
+        diffOldQty = preQty
+      end
+    end
+
+    if diffKind == "new" then
+      row.price:SetText(FormatCoins(lim) .. " |cff06b6d4+|r")
+    elseif diffKind == "mod" then
+      row.price:SetText(FormatCoins(lim) .. " |cfff59e0b*|r")
+    else
+      row.price:SetText(FormatCoins(lim))
+    end
     row.price:SetAlpha(isTracked and 1 or 0.5)
     local seen = state.lastSeenByItem and state.lastSeenByItem[itemID]
     if seen then
@@ -1938,7 +2418,17 @@ local function RenderWatchlist()
     else
       row.live:SetText("|cff475569-|r")
     end
-    row.cap:SetText(cap > 0 and ("|cfff59e0b<= " .. cap .. "|r") or "|cff64748bвсе|r")
+    if baseCap > 0 then
+      if remCap == 0 then
+        row.cap:SetText("|cff10b981выкуп.|r")
+      elseif remCap < baseCap then
+        row.cap:SetText(string.format("|cfff59e0b%d|r|cff64748b/%d|r", remCap, baseCap))
+      else
+        row.cap:SetText(string.format("|cfff59e0bост. %d|r", baseCap))
+      end
+    else
+      row.cap:SetText("|cff64748bвсе|r")
+    end
 
     if seen and (seen.availBelow or 0) > 0 then
       row:SetBackdropColor(0.03, 0.16, 0.12, 1)
@@ -1954,43 +2444,8 @@ local function RenderWatchlist()
       row.bar:SetColorTexture(0.14, 0.20, 0.30, 0)
     end
 
-    row:SetScript("OnClick", function()
-      ForeverSniperDB.selectedID = itemID
-      SyncInputsFromSelected()
-      ClearPendingDeal()
-      UpdateStatus()
-    end)
-
-    row.eye:SetScript("OnClick", function()
-      ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
-      local nextState = not IsItemTracked(itemID)
-      ForeverSniperDB.tracked[itemID] = nextState
-      if not nextState and ForeverSniperDB.selectedID == itemID then
-        ForeverSniperDB.selectedID = nil
-      elseif nextState then
-        ForeverSniperDB.selectedID = itemID
-      end
-      if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
-      ClearPendingDeal()
-      UpdateStatus()
-      SyncInputsFromSelected()
-    end)
-
-    row.del:SetScript("OnClick", function()
-      ForeverSniperDB.watchlist[itemID] = nil
-      if ForeverSniperDB.qtyLimits then ForeverSniperDB.qtyLimits[itemID] = nil end
-      if ForeverSniperDB.tracked then ForeverSniperDB.tracked[itemID] = nil end
-      if ForeverSniperDB.selectedID == itemID then
-        ForeverSniperDB.selectedID = nil
-      end
-      if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
-      ClearPendingDeal()
-      UpdateStatus()
-      SyncInputsFromSelected()
-    end)
-
     row:Show()
-    y = y + rowH + 2
+    y = y + rowH + 4
   end
 
   wlContent:SetHeight(math.max(168, y))
@@ -2028,38 +2483,51 @@ UpdateStatus = function()
 
   if ForeverSniperDB.autoScan then
     scanBtn:SetLabel("Пауза")
-    scanBtn:SetColors({ 0.30, 0.16, 0.06, 1 }, { 0.44, 0.22, 0.08, 1 }, { 0.96, 0.62, 0.04, 0.75 }, { 1, 0.94, 0.80 })
+    scanBtn:SetColors({ 0.14, 0.11, 0.05, 1 }, { 0.22, 0.17, 0.07, 1 }, { 0.92, 0.62, 0.04, 0.70 }, { 0.99, 0.88, 0.55 })
   else
     scanBtn:SetLabel("Старт скан")
     scanBtn:SetColors({ 0.08, 0.13, 0.21, 1 }, { 0.12, 0.19, 0.30, 1 }, { 0.06, 0.73, 0.51, 0.55 }, { 0.86, 0.96, 0.92 })
   end
 
   local sel = ForeverSniperDB.selectedID
-  if sel and ForeverSniperDB.watchlist[sel] then
-    local icon, nm, r, g, b = GetItemVisuals(sel)
-    itemIcon:SetTexture(icon)
-    iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
-    targetNameText:SetText(nm)
-    targetNameText:SetTextColor(r, g, b)
-    targetSubText:SetText(string.format("|cff64748bID %d  |  Перетащите предмет из сумки на иконку|r", sel))
-  else
-    itemIcon:SetTexture(134400)
-    iconFrame:SetBackdropBorderColor(0.25, 0.33, 0.45, 1)
-    targetNameText:SetText("Нет выбранного предмета")
-    targetNameText:SetTextColor(0.65, 0.72, 0.82)
-    targetSubText:SetText("|cff64748bЗадайте ID и цену ниже или нажмите Импорт|r")
+  if not (isCfgOpen and isCfgNewMode) then
+    if sel and ForeverSniperDB.watchlist[sel] then
+      local icon, nm, r, g, b = GetItemVisuals(sel)
+      itemIcon:SetTexture(icon)
+      iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
+      targetNameText:SetText(nm)
+      targetNameText:SetTextColor(r, g, b)
+      targetSubText:SetText(string.format("|cff64748bID %d  |  Перетащите предмет из сумки на иконку|r", sel))
+    else
+      itemIcon:SetTexture(134400)
+      iconFrame:SetBackdropBorderColor(0.25, 0.33, 0.45, 1)
+      targetNameText:SetText("Нет выбранного предмета")
+      targetNameText:SetTextColor(0.65, 0.72, 0.82)
+      targetSubText:SetText("|cff64748bЗадайте ID и цену ниже или нажмите Импорт|r")
+    end
   end
 
+  SyncAdaptiveLayout()
+  if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
   if ForeverSniperDB.activePreset and ForeverSniperDB.presets and ForeverSniperDB.presets[ForeverSniperDB.activePreset] then
-    local dirtyMark = ForeverSniperDB.presetDirty and " |cfff59e0b*|r" or ""
-    wlHeader:SetText(string.format("|cff10b981ШАБЛОН: %s|r%s", ForeverSniperDB.activePreset, dirtyMark))
-    if ForeverSniperDB.presetDirty then wlSaveBtn:Show() else wlSaveBtn:Hide() end
-    presetsBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.85 }, { 0.85, 1, 0.94 })
+    if ForeverSniperDB.presetDirty then
+      presetPickerBtn:SetLabel(string.format("|cfff59e0bШаблон: %s *|r", ForeverSniperDB.activePreset))
+      presetPickerBtn:SetColors({ 0.14, 0.11, 0.04, 1 }, { 0.22, 0.16, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.85 }, { 0.99, 0.88, 0.45 })
+      wlSaveBtn:Show()
+    else
+      presetPickerBtn:SetLabel(string.format("|cff10b981Шаблон: %s|r", ForeverSniperDB.activePreset))
+      presetPickerBtn:SetColors({ 0.04, 0.14, 0.12, 1 }, { 0.06, 0.20, 0.17, 1 }, { 0.06, 0.73, 0.51, 0.7 }, { 0.85, 1, 0.94 })
+      wlSaveBtn:Hide()
+    end
   else
     ForeverSniperDB.presetDirty = false
     wlSaveBtn:Hide()
-    wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
-    presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.96, 0.85, 0.55 })
+    presetPickerBtn:SetLabel("|cfff59e0bШаблон: не выбран|r")
+    presetPickerBtn:SetColors({ 0.06, 0.09, 0.16, 1 }, { 0.10, 0.15, 0.25, 1 }, { 0.20, 0.28, 0.40, 0.85 }, { 0.96, 0.85, 0.45 })
+  end
+  presetPickerBtn:SetFlatEnabled(not ForeverSniperDB.autoScan)
+  if ForeverSniperDB.autoScan and f.presetMenu and f.presetMenu:IsShown() then
+    f.presetMenu:Hide()
   end
   if f.miniContextText then
     if sel and ForeverSniperDB.watchlist[sel] then
@@ -2077,9 +2545,9 @@ UpdateStatus = function()
   end
 end
 
-ClearPendingDeal = function(keepLowestMsg, skipCancel)
+ClearPendingDeal = function(keepLowestMsg, allowServerCancel)
   local prev = state.pendingDeal
-  if not skipCancel and prev and prev.isCommodity and prev.stage == "confirm" then
+  if allowServerCancel and prev and prev.isCommodity and prev.stage == "confirm" then
     if C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
       pcall(C_AuctionHouse.CancelCommoditiesPurchase)
     end
@@ -2154,7 +2622,7 @@ local function ExecuteBuyAction(mouseButton)
   if not deal or not state.ahOpen then return end
 
   if mouseButton == "RightButton" then
-    ClearPendingDeal()
+    ClearPendingDeal(false, true)
     return
   end
 
@@ -2216,7 +2684,7 @@ local function ExecuteBuyAction(mouseButton)
     }
     C_AuctionHouse.ConfirmCommoditiesPurchase(deal.itemID, chosenQty)
     state.pauseScanUntil = GetTime() + 0.6
-    ClearPendingDeal(false, true)
+    ClearPendingDeal(false, false)
   end
 end
 
@@ -2229,7 +2697,7 @@ buyBtn:SetScript("OnClick", function(_, mouseButton)
 end)
 
 skipBtn:SetScript("OnClick", function()
-  ClearPendingDeal()
+  ClearPendingDeal(false, true)
 end)
 
 local function ApplyManualTarget()
@@ -2245,6 +2713,7 @@ local function ApplyManualTarget()
   ForeverSniperDB.watchlist[id] = copper
   ForeverSniperDB.qtyLimits = ForeverSniperDB.qtyLimits or {}
   ForeverSniperDB.qtyLimits[id] = (maxQ > 0) and math.floor(maxQ) or nil
+  if ForeverSniperDB.boughtByItem then ForeverSniperDB.boughtByItem[id] = nil end
   ForeverSniperDB.selectedID = id
   if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
   idInput:ClearFocus()
@@ -2252,8 +2721,11 @@ local function ApplyManualTarget()
   silverInput:ClearFocus()
   copperInput:ClearFocus()
   maxQtyLimitInput:ClearFocus()
+  isCfgNewMode = false
   ClearPendingDeal()
+  if SetCfgOpen then SetCfgOpen(false) end
   UpdateStatus()
+  ResetManualInputs()
   return true
 end
 
@@ -2387,6 +2859,7 @@ imp:SetMovable(true)
 imp:RegisterForDrag("LeftButton")
 imp:SetScript("OnDragStart", imp.StartMoving)
 imp:SetScript("OnDragStop", imp.StopMovingOrSizing)
+AttachDropShadow(imp, 14, 0.80)
 imp:Hide()
 
 local impAccent = imp:CreateTexture(nil, "ARTWORK")
@@ -2455,6 +2928,7 @@ local function RunImport(replaceAll)
   if replaceAll then
     ForeverSniperDB.selectedID = firstID
     ForeverSniperDB.activePreset = nil
+    ForeverSniperDB.boughtByItem = {}
   elseif not ForeverSniperDB.selectedID then
     ForeverSniperDB.selectedID = firstID
   end
@@ -2480,7 +2954,7 @@ local function OpenImportModal()
   editBox:SetFocus()
 end
 
-local function OpenExportModal(titleText, bodyText)
+OpenExportModal = function(titleText, bodyText)
   impTitle:SetText("|cff06b6d4" .. (titleText or "Экспорт (Ctrl+C)") .. "|r")
   impReplace:Hide()
   impAdd:Hide()
@@ -2500,98 +2974,8 @@ impAdd:SetScript("OnClick", function() RunImport(false) end)
 importBtn:SetScript("OnClick", OpenImportModal)
 
 -- ============================================================================
--- Saved Presets Modal (Save / Load / Delete Watchlist Presets)
+-- Saved Presets & Inline Popover (Save / Load / Copy / Delete / Export)
 -- ============================================================================
-local pre = CreateFrame("Frame", "ForeverSniperPresetsFrame", UIParent, "BackdropTemplate")
-pre:SetSize(476, 336)
-pre:SetPoint("CENTER")
-pre:SetBackdrop(FLAT_BACKDROP)
-pre:SetBackdropColor(0.043, 0.067, 0.125, 0.98)
-pre:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
-pre:SetFrameStrata("FULLSCREEN_DIALOG")
-pre:EnableMouse(true)
-pre:SetMovable(true)
-pre:RegisterForDrag("LeftButton")
-pre:SetScript("OnDragStart", pre.StartMoving)
-pre:SetScript("OnDragStop", pre.StopMovingOrSizing)
-pre:Hide()
-
-local preAccent = pre:CreateTexture(nil, "ARTWORK")
-preAccent:SetHeight(2)
-preAccent:SetPoint("TOPLEFT", 1, -1)
-preAccent:SetPoint("TOPRIGHT", -1, -1)
-preAccent:SetColorTexture(1, 1, 1, 1)
-preAccent:SetGradient("HORIZONTAL", CreateColor(0.92, 0.70, 0.03, 1), CreateColor(0.06, 0.73, 0.51, 1))
-
-local preTitle = pre:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-preTitle:SetPoint("TOPLEFT", 16, -14)
-preTitle:SetText("|cfff59e0bПресеты списков отслеживания|r")
-
-local preClose = CreateFlatButton(nil, pre, 24, 24, "X")
-preClose:SetPoint("TOPRIGHT", -14, -12)
-preClose:SetColors({ 0.10, 0.13, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.22, 0.28, 0.40, 1 }, { 0.85, 0.89, 0.95 })
-preClose:SetScript("OnClick", function() pre:Hide() end)
-
-local preExitBtn = CreateFlatButton(nil, pre, 126, 22, "Выйти из шаблона")
-preExitBtn:SetPoint("RIGHT", preClose, "LEFT", -8, 0)
-preExitBtn:SetColors({ 0.14, 0.17, 0.25, 1 }, { 0.24, 0.28, 0.38, 1 }, { 0.28, 0.34, 0.46, 1 }, { 0.85, 0.90, 0.96 })
-
-local preNameInput = CreateFrame("EditBox", nil, pre, "BackdropTemplate")
-StyleFlatBox(preNameInput, 170, 26)
-preNameInput:SetPoint("TOPLEFT", 16, -46)
-
-local prePlaceholder = preNameInput:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-prePlaceholder:SetPoint("LEFT", 8, 0)
-prePlaceholder:SetText("|cff64748bНазвание шаблона...|r")
-preNameInput:HookScript("OnTextChanged", function(self)
-  if (self:GetText() or "") == "" then prePlaceholder:Show() else prePlaceholder:Hide() end
-end)
-
-local preSaveBtn = CreateFlatButton(nil, pre, 114, 26, "Сохранить")
-preSaveBtn:SetPoint("LEFT", preNameInput, "RIGHT", 6, 0)
-preSaveBtn:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
-
-local preNewBtn = CreateFlatButton(nil, pre, 92, 26, "+ Новый")
-preNewBtn:SetPoint("LEFT", preSaveBtn, "RIGHT", 6, 0)
-preNewBtn:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
-
-local preListBox = CreateFrame("Frame", nil, pre, "BackdropTemplate")
-preListBox:SetPoint("TOPLEFT", 16, -82)
-preListBox:SetPoint("BOTTOMRIGHT", -16, 44)
-preListBox:SetBackdrop(FLAT_BACKDROP)
-preListBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
-preListBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
-
-local preScroll = CreateFrame("ScrollFrame", "ForeverSniperPreScroll", preListBox, "UIPanelScrollFrameTemplate")
-preScroll:SetPoint("TOPLEFT", 4, -4)
-preScroll:SetPoint("BOTTOMRIGHT", -14, 4)
-
-local preScrollBar = _G["ForeverSniperPreScrollScrollBar"]
-if preScrollBar then
-  local up = _G["ForeverSniperPreScrollScrollBarScrollUpButton"]
-  local dn = _G["ForeverSniperPreScrollScrollBarScrollDownButton"]
-  if up then up:Hide(); up:SetSize(1, 1) end
-  if dn then dn:Hide(); dn:SetSize(1, 1) end
-  local thumb = preScrollBar:GetThumbTexture()
-  if thumb then
-    thumb:SetColorTexture(0.24, 0.32, 0.46, 0.85)
-    thumb:SetWidth(4)
-  end
-end
-
-local preContent = CreateFrame("Frame", nil, preScroll)
-preContent:SetSize(422, 200)
-preScroll:SetScrollChild(preContent)
-local preRows = {}
-
-local preStarterBtn = CreateFlatButton(nil, pre, 142, 24, "Стартовые [PRO]")
-preStarterBtn:SetPoint("BOTTOMLEFT", 16, 12)
-preStarterBtn:SetColors({ 0.16, 0.13, 0.04, 1 }, { 0.28, 0.21, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.85 }, { 0.99, 0.88, 0.45 })
-
-local preHint = pre:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-preHint:SetPoint("LEFT", preStarterBtn, "RIGHT", 10, 0)
-preHint:SetText("|cff64748b5 наборов под рынок Forever (без перезаписи своих)|r")
-
 local PRO_STARTER_PRESETS = {
   ["[PRO] Топ Рейд-Травы"] = {
     watchlist = { [13468] = 90000, [13466] = 1900, [13463] = 1650, [13464] = 1150, [13465] = 1000, [8845] = 4000 },
@@ -2615,24 +2999,346 @@ local PRO_STARTER_PRESETS = {
   },
 }
 
-local preEmptyText = preListBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-preEmptyText:SetPoint("CENTER")
-preEmptyText:SetWidth(330)
-preEmptyText:SetJustifyH("CENTER")
-preEmptyText:SetText("|cff64748bНет сохранённых шаблонов.\nВведите название выше и нажмите «+ Новый» или «Сохранить».|r")
-preEmptyText:Hide()
-
 local function CopyTableShallow(tbl)
   local out = {}
   for k, v in pairs(tbl or {}) do out[k] = v end
   return out
 end
 
-local function SyncActivePresetSnapshot()
+SyncActivePresetSnapshot = function()
   local ap = ForeverSniperDB.activePreset
-  if ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap] then
-    ForeverSniperDB.presetDirty = true
+  local p = ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap]
+  if not p then
+    ForeverSniperDB.presetDirty = false
+    return
   end
+  local curWL = ForeverSniperDB.watchlist or {}
+  local preWL = p.watchlist or {}
+  local curQty = ForeverSniperDB.qtyLimits or {}
+  local preQty = p.qtyLimits or {}
+
+  for id, price in pairs(curWL) do
+    if preWL[id] ~= price then ForeverSniperDB.presetDirty = true; return end
+    if (curQty[id] or 0) ~= (preQty[id] or 0) then ForeverSniperDB.presetDirty = true; return end
+  end
+  for id, price in pairs(preWL) do
+    if curWL[id] ~= price then ForeverSniperDB.presetDirty = true; return end
+  end
+  ForeverSniperDB.presetDirty = false
+end
+
+local function LoadPresetByName(nm)
+  if not nm then
+    ForeverSniperDB.activePreset = nil
+    ForeverSniperDB.presetDirty = false
+    UpdateStatus()
+    return
+  end
+  local p = ForeverSniperDB.presets and ForeverSniperDB.presets[nm]
+  if not p then return end
+  ForeverSniperDB.activePreset = nm
+  ForeverSniperDB.presetDirty = false
+  ForeverSniperDB.watchlist = CopyTableShallow(p.watchlist)
+  ForeverSniperDB.qtyLimits = CopyTableShallow(p.qtyLimits)
+  ForeverSniperDB.tracked = CopyTableShallow(p.tracked)
+  ForeverSniperDB.boughtByItem = {}
+  ForeverSniperDB.selectedID = nil
+  state.lastSeenByItem = {}
+  if C_Item and C_Item.RequestLoadItemDataByID then
+    for id in pairs(p.watchlist or {}) do
+      C_Item.RequestLoadItemDataByID(id)
+    end
+  end
+  ClearPendingDeal()
+  UpdateStatus()
+  SyncInputsFromSelected()
+  local cnt = 0
+  for _ in pairs(p.watchlist or {}) do cnt = cnt + 1 end
+  print(string.format("|cff10b981Goblin Broker:|r активен шаблон «%s» (%d поз.).", nm, cnt))
+end
+
+do
+  local menu = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  menu:SetFrameStrata("FULLSCREEN_DIALOG")
+  menu:SetBackdrop(FLAT_BACKDROP)
+  menu:SetBackdropColor(0.043, 0.067, 0.125, 0.98)
+  menu:SetBackdropBorderColor(0.24, 0.32, 0.46, 1)
+  menu:SetWidth(380)
+  menu:EnableMouse(true)
+  AttachDropShadow(menu, 12, 0.85)
+  menu:Hide()
+  f.presetMenu = menu
+
+  local newInput = CreateFrame("EditBox", nil, menu, "BackdropTemplate")
+  StyleFlatBox(newInput, 200, 24)
+  newInput:SetPoint("TOPLEFT", 8, -8)
+
+  local newPH = newInput:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  newPH:SetPoint("LEFT", 8, 0)
+  newPH:SetText("|cff64748bНовый шаблон...|r")
+  newInput:SetScript("OnEscapePressed", function(self) self:ClearFocus(); menu:Hide() end)
+
+  local btnEmpty = CreateFlatButton(nil, menu, 78, 24, "+ Новый")
+  btnEmpty:SetPoint("LEFT", newInput, "RIGHT", 6, 0)
+  btnEmpty:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
+  btnEmpty:SetFlatEnabled(false)
+
+  local btnCopy = CreateFlatButton(nil, menu, 74, 24, "Копия")
+  btnCopy:SetPoint("LEFT", btnEmpty, "RIGHT", 6, 0)
+  btnCopy:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
+  btnCopy:SetFlatEnabled(false)
+
+  local function RefreshCreatePresetButtons()
+    local raw = newInput:GetText() or ""
+    if raw == "" then newPH:Show() else newPH:Hide() end
+    local nm = raw:gsub("^%s+", ""):gsub("%s+$", "")
+    local exists = (nm ~= "" and ForeverSniperDB.presets and ForeverSniperDB.presets[nm] ~= nil)
+    if nm == "" then
+      btnEmpty:SetFlatEnabled(false)
+      btnCopy:SetFlatEnabled(false)
+      newInput:SetBackdropBorderColor(0.18, 0.24, 0.35, 1)
+    elseif exists then
+      btnEmpty:SetFlatEnabled(false)
+      btnCopy:SetFlatEnabled(false)
+      newInput:SetBackdropBorderColor(0.95, 0.28, 0.32, 1)
+    else
+      btnEmpty:SetFlatEnabled(true)
+      btnCopy:SetFlatEnabled(true)
+      if newInput:HasFocus() then
+        newInput:SetBackdropBorderColor(0.92, 0.70, 0.03, 1)
+      else
+        newInput:SetBackdropBorderColor(0.18, 0.24, 0.35, 1)
+      end
+    end
+  end
+
+  newInput:HookScript("OnTextChanged", RefreshCreatePresetButtons)
+
+  local divTop = menu:CreateTexture(nil, "ARTWORK")
+  divTop:SetHeight(1)
+  divTop:SetPoint("TOPLEFT", 8, -38)
+  divTop:SetPoint("TOPRIGHT", -8, -38)
+  divTop:SetColorTexture(0.18, 0.25, 0.36, 0.85)
+
+  local divBot = menu:CreateTexture(nil, "ARTWORK")
+  divBot:SetHeight(1)
+  divBot:SetColorTexture(0.18, 0.25, 0.36, 0.85)
+
+  local btnPro = CreateFlatButton(nil, menu, 174, 22, "+ 5 [PRO] наборов")
+  btnPro:SetColors({ 0.16, 0.13, 0.04, 1 }, { 0.28, 0.21, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.85 }, { 0.99, 0.88, 0.45 })
+
+  local btnNone = CreateFlatButton(nil, menu, 140, 22, "Без шаблона")
+  btnNone:SetColors({ 0.10, 0.13, 0.20, 1 }, { 0.18, 0.22, 0.32, 1 }, { 0.24, 0.30, 0.42, 0.8 }, { 0.78, 0.84, 0.92 })
+
+  local mRows = {}
+  local function RenderPresetMenu()
+    ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+    local names = {}
+    for nm in pairs(ForeverSniperDB.presets) do table.insert(names, nm) end
+    table.sort(names)
+
+    for _, r in ipairs(mRows) do r:Hide() end
+    local y = -46
+    for i, nm in ipairs(names) do
+      local p = ForeverSniperDB.presets[nm]
+      local r = mRows[i]
+      if not r then
+        r = CreateFrame("Frame", nil, menu)
+        r:SetSize(364, 24)
+        r.sel = CreateFlatButton(nil, r, 290, 22, "")
+        r.sel:SetPoint("LEFT", 0, 0)
+        r.sel.label:SetJustifyH("LEFT")
+        r.sel.label:ClearAllPoints()
+        r.sel.label:SetPoint("LEFT", 8, 0)
+        r.sel.label:SetPoint("RIGHT", -6, 0)
+        r.sel:HookScript("OnEnter", function(self)
+          if not GameTooltip or not self.presetName then return end
+          local pd = ForeverSniperDB.presets and ForeverSniperDB.presets[self.presetName]
+          if not pd then return end
+          GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+          GameTooltip:AddLine("|cfff59e0b" .. self.presetName .. "|r")
+          local ids = {}
+          for id in pairs(pd.watchlist or {}) do table.insert(ids, id) end
+          table.sort(ids)
+          if #ids == 0 then
+            GameTooltip:AddLine("Пустой шаблон", 0.65, 0.72, 0.82)
+          else
+            for idxItem, id in ipairs(ids) do
+              if idxItem > 10 then
+                GameTooltip:AddLine(string.format("... и ещё %d поз.", #ids - 10), 0.65, 0.72, 0.82)
+                break
+              end
+              local _, iname = GetItemVisuals(id)
+              local lim = pd.watchlist[id] or 0
+              local q = pd.qtyLimits and pd.qtyLimits[id]
+              local qTxt = (q and q > 0) and (" <= " .. q) or ""
+              GameTooltip:AddDoubleLine(iname, FormatCoinsPlain(lim) .. qTxt, 0.88, 0.92, 0.98, 0.06, 0.85, 0.55)
+            end
+          end
+          GameTooltip:Show()
+        end)
+        r.sel:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+
+        r.exp = CreateFlatButton(nil, r, 46, 22, "Эксп.")
+        r.exp:SetPoint("LEFT", r.sel, "RIGHT", 2, 0)
+        r.exp:SetColors({ 0, 0, 0, 0 }, { 0.12, 0.18, 0.28, 1 }, { 0, 0, 0, 0 }, { 0.55, 0.68, 0.82 })
+        r.del = CreateFlatButton(nil, r, 22, 22, "x")
+        r.del:SetPoint("LEFT", r.exp, "RIGHT", 2, 0)
+        r.del:SetColors({ 0, 0, 0, 0 }, { 0.48, 0.12, 0.16, 1 }, { 0, 0, 0, 0 }, { 0.55, 0.58, 0.65 })
+        mRows[i] = r
+      end
+      local cnt = 0
+      for _ in pairs(p.watchlist or {}) do cnt = cnt + 1 end
+      local isActive = (nm == ForeverSniperDB.activePreset)
+      r:ClearAllPoints()
+      r:SetPoint("TOPLEFT", 8, y)
+      r.sel.presetName = nm
+      if isActive then
+        r.sel:SetLabel(string.format("%s %s  |cff6ee7b7(%d)|r", DOT_GREEN, nm, cnt))
+        r.sel:SetColors({ 0.04, 0.16, 0.14, 0.95 }, { 0.06, 0.22, 0.18, 1 }, { 0.06, 0.73, 0.51, 0.65 }, { 0.88, 1, 0.95 })
+      else
+        r.sel:SetLabel(string.format("   %s  |cff64748b(%d)|r", nm, cnt))
+        r.sel:SetColors({ 0, 0, 0, 0 }, { 0.10, 0.15, 0.24, 1 }, { 0, 0, 0, 0 }, { 0.88, 0.92, 0.98 })
+      end
+      r.sel:SetScript("OnClick", function()
+        menu:Hide()
+        LoadPresetByName(nm)
+      end)
+      r.exp:SetScript("OnClick", function()
+        local ids = {}
+        for id in pairs(p.watchlist or {}) do table.insert(ids, id) end
+        table.sort(ids)
+        local lines = {}
+        for _, id in ipairs(ids) do
+          local price = p.watchlist[id]
+          local q = p.qtyLimits and p.qtyLimits[id]
+          if q and q > 0 then
+            table.insert(lines, string.format("%d=%d:%d", id, price, q))
+          else
+            table.insert(lines, string.format("%d=%d", id, price))
+          end
+        end
+        menu:Hide()
+        OpenExportModal("Экспорт шаблона: " .. nm, table.concat(lines, "\n"))
+        print(string.format("|cff06b6d4Goblin Broker:|r экспорт шаблона «%s» (%d поз.) — скопируйте Ctrl+C.", nm, #lines))
+      end)
+      r.del:SetScript("OnClick", function()
+        ForeverSniperDB.presets[nm] = nil
+        if ForeverSniperDB.activePreset == nm then
+          ForeverSniperDB.activePreset = nil
+          ForeverSniperDB.presetDirty = false
+          UpdateStatus()
+        end
+        RenderPresetMenu()
+      end)
+      r:Show()
+      y = y - 25
+    end
+
+    if #names == 0 then y = y - 4 end
+    divBot:ClearAllPoints()
+    divBot:SetPoint("TOPLEFT", 8, y - 2)
+    divBot:SetPoint("TOPRIGHT", -8, y - 2)
+
+    local missingPro = 0
+    for nm in pairs(PRO_STARTER_PRESETS) do
+      if not ForeverSniperDB.presets[nm] then missingPro = missingPro + 1 end
+    end
+
+    btnPro:ClearAllPoints()
+    btnNone:ClearAllPoints()
+    if missingPro > 0 then
+      btnPro:Show()
+      btnPro:SetPoint("TOPLEFT", 8, y - 9)
+      btnNone:SetWidth(184)
+      btnNone:SetPoint("LEFT", btnPro, "RIGHT", 6, 0)
+    else
+      btnPro:Hide()
+      btnNone:SetWidth(364)
+      btnNone:SetPoint("TOPLEFT", 8, y - 9)
+    end
+    RefreshCreatePresetButtons()
+    menu:SetHeight(-(y - 39))
+  end
+
+  local function CreatePresetFromInput(emptyNew)
+    local nm = (newInput:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if nm == "" then
+      print("|cfff59e0bGoblin Broker:|r введите название шаблона.")
+      return
+    end
+    ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+    if ForeverSniperDB.presets[nm] then
+      print(string.format("|cfff43f5eGoblin Broker:|r шаблон «%s» уже существует — используйте другое имя или кнопку «• Обновить».", nm))
+      return
+    end
+    if emptyNew then
+      ForeverSniperDB.presets[nm] = { watchlist = {}, qtyLimits = {}, tracked = {} }
+      ForeverSniperDB.activePreset = nm
+      ForeverSniperDB.presetDirty = false
+      ForeverSniperDB.watchlist = {}
+      ForeverSniperDB.qtyLimits = {}
+      ForeverSniperDB.tracked = {}
+      ForeverSniperDB.selectedID = nil
+      state.lastSeenByItem = {}
+      ClearPendingDeal()
+      UpdateStatus()
+    else
+      ForeverSniperDB.presets[nm] = {
+        watchlist = CopyTableShallow(ForeverSniperDB.watchlist),
+        qtyLimits = CopyTableShallow(ForeverSniperDB.qtyLimits),
+        tracked = CopyTableShallow(ForeverSniperDB.tracked),
+      }
+      ForeverSniperDB.activePreset = nm
+      ForeverSniperDB.presetDirty = false
+      UpdateStatus()
+    end
+    newInput:SetText("")
+    newInput:ClearFocus()
+    RenderPresetMenu()
+    print(string.format("|cff10b981Goblin Broker:|r шаблон «%s» создан.", nm))
+  end
+
+  btnEmpty:SetScript("OnClick", function() CreatePresetFromInput(true) end)
+  btnCopy:SetScript("OnClick", function() CreatePresetFromInput(false) end)
+  newInput:SetScript("OnEnterPressed", function() CreatePresetFromInput(false) end)
+
+  btnPro:SetScript("OnClick", function()
+    ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+    local added = 0
+    for nm, data in pairs(PRO_STARTER_PRESETS) do
+      if not ForeverSniperDB.presets[nm] then
+        ForeverSniperDB.presets[nm] = {
+          watchlist = CopyTableShallow(data.watchlist),
+          qtyLimits = CopyTableShallow(data.qtyLimits),
+        }
+        added = added + 1
+      end
+    end
+    RenderPresetMenu()
+    if added > 0 then
+      print(string.format("|cff10b981Goblin Broker:|r добавлено %d PRO-шаблонов.", added))
+    else
+      print("|cff94a3b8Goblin Broker:|r все 5 PRO-шаблонов уже есть.")
+    end
+  end)
+
+  btnNone:SetScript("OnClick", function()
+    menu:Hide()
+    LoadPresetByName(nil)
+  end)
+
+  presetPickerBtn:SetScript("OnClick", function()
+    if ForeverSniperDB.autoScan then return end
+    if menu:IsShown() then
+      menu:Hide()
+    else
+      RenderPresetMenu()
+      menu:ClearAllPoints()
+      menu:SetPoint("TOPLEFT", presetPickerBtn, "BOTTOMLEFT", 0, -2)
+      menu:Show()
+    end
+  end)
 end
 
 wlSaveBtn:SetScript("OnClick", function()
@@ -2645,186 +3351,7 @@ wlSaveBtn:SetScript("OnClick", function()
     }
     ForeverSniperDB.presetDirty = false
     UpdateStatus()
-    print(string.format("|cff10b981Goblin Broker:|r изменения сохранены в шаблон «%s».", ap))
-  end
-end)
-
-local function RenderPresetsList()
-  ForeverSniperDB.presets = ForeverSniperDB.presets or {}
-  for _, r in ipairs(preRows) do r:Hide() end
-
-  if ForeverSniperDB.activePreset then
-    preExitBtn:SetFlatEnabled(true)
-  else
-    preExitBtn:SetFlatEnabled(false)
-  end
-
-  local names = {}
-  for nm in pairs(ForeverSniperDB.presets) do table.insert(names, nm) end
-  table.sort(names)
-
-  if #names == 0 then
-    preEmptyText:Show()
-  else
-    preEmptyText:Hide()
-  end
-
-  local y = 0
-  for i, nm in ipairs(names) do
-    local p = ForeverSniperDB.presets[nm]
-    local row = preRows[i]
-    if not row then
-      row = CreateFrame("Frame", nil, preContent, "BackdropTemplate")
-      row:SetSize(418, 28)
-      row:SetBackdrop(FLAT_BACKDROP)
-      row:SetBackdropColor(0.055, 0.078, 0.135, 1)
-      row:SetBackdropBorderColor(0.16, 0.22, 0.34, 0.85)
-
-      row.nm = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.nm:SetPoint("LEFT", 8, 0); row.nm:SetWidth(174); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
-
-      row.cnt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.cnt:SetPoint("LEFT", row.nm, "RIGHT", 4, 0); row.cnt:SetWidth(48); row.cnt:SetJustifyH("RIGHT")
-
-      row.exp = CreateFlatButton(nil, row, 60, 22, "Экспорт")
-      row.exp:SetPoint("RIGHT", -122, 0)
-      row.exp:SetColors({ 0.12, 0.16, 0.25, 1 }, { 0.18, 0.24, 0.36, 1 }, { 0.24, 0.32, 0.46, 0.85 }, { 0.78, 0.86, 0.96 })
-
-      row.load = CreateFlatButton(nil, row, 88, 22, "Мониторить")
-      row.load:SetPoint("RIGHT", -28, 0)
-      row.load:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
-
-      row.del = CreateFlatButton(nil, row, 20, 22, "x")
-      row.del:SetPoint("RIGHT", -4, 0)
-      row.del:SetColors({ 0.12, 0.15, 0.22, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.20, 0.26, 0.36, 1 }, { 0.75, 0.80, 0.88 })
-
-      preRows[i] = row
-    end
-
-    local cnt = 0
-    for _ in pairs(p.watchlist or {}) do cnt = cnt + 1 end
-
-    row:ClearAllPoints()
-    row:SetPoint("TOPLEFT", 0, -y)
-    if nm == ForeverSniperDB.activePreset then
-      row:SetBackdropColor(0.03, 0.16, 0.12, 1)
-      row:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.9)
-      row.nm:SetText("|cff10b981" .. nm .. "|r")
-    else
-      row:SetBackdropColor(0.055, 0.078, 0.135, 1)
-      row:SetBackdropBorderColor(0.16, 0.22, 0.34, 0.85)
-      row.nm:SetText("|cfff8fafc" .. nm .. "|r")
-    end
-    row.cnt:SetText("|cff94a3b8" .. cnt .. " поз.|r")
-
-    row.load:SetScript("OnClick", function()
-      ForeverSniperDB.activePreset = nm
-      ForeverSniperDB.presetDirty = false
-      ForeverSniperDB.watchlist = CopyTableShallow(p.watchlist)
-      ForeverSniperDB.qtyLimits = CopyTableShallow(p.qtyLimits)
-      ForeverSniperDB.tracked = CopyTableShallow(p.tracked)
-      ForeverSniperDB.selectedID = nil
-      state.lastSeenByItem = {}
-      pre:Hide()
-      ClearPendingDeal()
-      UpdateStatus()
-      SyncInputsFromSelected()
-      print(string.format("|cff10b981Goblin Broker:|r активен шаблон «%s» (%d поз.).", nm, cnt))
-    end)
-
-    row.exp:SetScript("OnClick", function()
-      local ids = {}
-      for id in pairs(p.watchlist or {}) do table.insert(ids, id) end
-      table.sort(ids)
-      local lines = {}
-      for _, id in ipairs(ids) do
-        local price = p.watchlist[id]
-        local q = p.qtyLimits and p.qtyLimits[id]
-        if q and q > 0 then
-          table.insert(lines, string.format("%d=%d:%d", id, price, q))
-        else
-          table.insert(lines, string.format("%d=%d", id, price))
-        end
-      end
-      OpenExportModal("Экспорт шаблона: " .. nm, table.concat(lines, "\n"))
-      print(string.format("|cff06b6d4Goblin Broker:|r экспорт шаблона «%s» (%d поз.) — скопируйте Ctrl+C.", nm, #lines))
-    end)
-
-    row.del:SetScript("OnClick", function()
-      ForeverSniperDB.presets[nm] = nil
-      if ForeverSniperDB.activePreset == nm then
-        ForeverSniperDB.activePreset = nil
-        UpdateStatus()
-      end
-      RenderPresetsList()
-    end)
-
-    row:Show()
-    y = y + 30
-  end
-
-  preContent:SetHeight(math.max(200, y))
-end
-
-local function SaveCurrentPreset(emptyNew)
-  local nm = (preNameInput:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
-  if nm == "" then
-    print("|cfff59e0bGoblin Broker:|r введите название шаблона.")
-    return
-  end
-  ForeverSniperDB.presets = ForeverSniperDB.presets or {}
-  if emptyNew then
-    ForeverSniperDB.presets[nm] = { watchlist = {}, qtyLimits = {}, tracked = {} }
-    ForeverSniperDB.activePreset = nm
-    ForeverSniperDB.presetDirty = false
-    ForeverSniperDB.watchlist = {}
-    ForeverSniperDB.qtyLimits = {}
-    ForeverSniperDB.tracked = {}
-    ForeverSniperDB.selectedID = nil
-    state.lastSeenByItem = {}
-    ClearPendingDeal()
-    UpdateStatus()
-  else
-    ForeverSniperDB.presets[nm] = {
-      watchlist = CopyTableShallow(ForeverSniperDB.watchlist),
-      qtyLimits = CopyTableShallow(ForeverSniperDB.qtyLimits),
-      tracked = CopyTableShallow(ForeverSniperDB.tracked),
-    }
-    ForeverSniperDB.activePreset = nm
-    ForeverSniperDB.presetDirty = false
-    UpdateStatus()
-  end
-  preNameInput:SetText("")
-  preNameInput:ClearFocus()
-  RenderPresetsList()
-  print(string.format("|cff10b981Goblin Broker:|r шаблон «%s» сохранён.", nm))
-end
-
-preExitBtn:SetScript("OnClick", function()
-  ForeverSniperDB.activePreset = nil
-  UpdateStatus()
-  RenderPresetsList()
-end)
-
-preSaveBtn:SetScript("OnClick", function() SaveCurrentPreset(false) end)
-preNewBtn:SetScript("OnClick", function() SaveCurrentPreset(true) end)
-preStarterBtn:SetScript("OnClick", function()
-  ForeverSniperDB.presets = ForeverSniperDB.presets or {}
-  local added = 0
-  for nm, data in pairs(PRO_STARTER_PRESETS) do
-    if not ForeverSniperDB.presets[nm] then
-      ForeverSniperDB.presets[nm] = {
-        watchlist = CopyTableShallow(data.watchlist),
-        qtyLimits = CopyTableShallow(data.qtyLimits),
-      }
-      added = added + 1
-    end
-  end
-  RenderPresetsList()
-  if added > 0 then
-    print(string.format("|cff10b981Goblin Broker:|r добавлено %d PRO-шаблонов под рынок Forever.", added))
-  else
-    print("|cff94a3b8Goblin Broker:|r все 5 PRO-шаблонов уже есть в списке.")
+    print(string.format("|cff10b981Goblin Broker:|r шаблон «%s» обновлён.", ap))
   end
 end)
 
@@ -2839,32 +3366,9 @@ if wlBox.emptyPanel and wlBox.emptyPanel.btn then
         }
       end
     end
-    local defName = "[PRO] Топ Рейд-Травы"
-    local p = ForeverSniperDB.presets[defName]
-    if p then
-      ForeverSniperDB.activePreset = defName
-      ForeverSniperDB.presetDirty = false
-      ForeverSniperDB.watchlist = CopyTableShallow(p.watchlist)
-      ForeverSniperDB.qtyLimits = CopyTableShallow(p.qtyLimits)
-      ForeverSniperDB.tracked = {}
-      ForeverSniperDB.selectedID = nil
-      state.lastSeenByItem = {}
-      ClearPendingDeal()
-      UpdateStatus()
-      SyncInputsFromSelected()
-    end
-    print("|cff10b981Goblin Broker:|r 5 PRO-наборов загружены, активен «[PRO] Топ Рейд-Травы» — жмите Старт скан!")
+    LoadPresetByName("[PRO] Топ Рейд-Травы")
   end)
 end
-preNameInput:SetScript("OnEnterPressed", function() SaveCurrentPreset(false) end)
-presetsBtn:SetScript("OnClick", function()
-  if pre:IsShown() then
-    pre:Hide()
-  else
-    RenderPresetsList()
-    pre:Show()
-  end
-end)
 
 -- ============================================================================
 -- 1-Second Polling Loop
@@ -2886,6 +3390,16 @@ f:SetScript("OnUpdate", function()
     return
   end
   state.lastConfirmRem = nil
+  if state.ahOpen and AuctionHouseFrame and not AuctionHouseFrame:IsShown() then
+    state.ahOpen = false
+    ForeverSniperDB.autoScan = false
+    if f.presetMenu then f.presetMenu:Hide() end
+    ClearPendingDeal()
+    UpdateStatus()
+    RefreshOverrideBindings()
+    f:Hide()
+    return
+  end
   if not state.ahOpen or not ForeverSniperDB.autoScan then return end
   if now < (state.pauseScanUntil or 0) then return end
   -- Stop sending search queries as soon as a deal is found so AH throttle stays 100% free for instant purchase
@@ -2897,7 +3411,7 @@ end)
 -- ============================================================================
 -- Events, Minimap Button & AH Hook
 -- ============================================================================
-local function RefreshOverrideBindings()
+RefreshOverrideBindings = function()
   if InCombatLockdown and InCombatLockdown() then return end
   if not ClearOverrideBindings or not SetOverrideBindingClick then return end
   ClearOverrideBindings(f)
@@ -2963,7 +3477,8 @@ mmBtn:SetSize(32, 32)
 mmBtn:SetFrameStrata("MEDIUM")
 mmBtn:SetFrameLevel(8)
 mmBtn:RegisterForClicks("LeftButtonUp")
-mmBtn:RegisterForDrag("RightButton")
+mmBtn:RegisterForDrag("LeftButton", "RightButton")
+mmBtn:SetClampedToScreen(true)
 mmBtn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
 local mmLogo = mmBtn:CreateTexture(nil, "ARTWORK")
@@ -2980,11 +3495,14 @@ local function UpdateMinimapPos()
 end
 
 mmBtn:SetScript("OnDragStart", function(self)
+  self.isDragging = true
+  self:LockHighlight()
   self:SetScript("OnUpdate", function()
     if not Minimap then return end
     local mx, my = Minimap:GetCenter()
+    if not mx or not my then return end
     local cx, cy = GetCursorPosition()
-    local scale = UIParent:GetEffectiveScale()
+    local scale = Minimap:GetEffectiveScale() or 1
     cx, cy = cx / scale, cy / scale
     ForeverSniperDB.minimapAngle = math.deg(math.atan2(cy - my, cx - mx))
     UpdateMinimapPos()
@@ -2993,9 +3511,12 @@ end)
 
 mmBtn:SetScript("OnDragStop", function(self)
   self:SetScript("OnUpdate", nil)
+  self:UnlockHighlight()
+  self.isDragging = false
 end)
 
-mmBtn:SetScript("OnClick", function()
+mmBtn:SetScript("OnClick", function(self)
+  if self.isDragging then return end
   ToggleSniperWindow()
 end)
 
@@ -3005,7 +3526,7 @@ mmBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("|cfff59e0bGoblin Broker|r|cfff8fafc: Forever|r")
     GameTooltip:AddLine("ЛКМ: Открыть / скрыть окно", 0.85, 0.90, 0.95)
-    GameTooltip:AddLine("ПКМ + перетаскивание: переместить кнопку", 0.58, 0.64, 0.72)
+    GameTooltip:AddLine("Перетаскивание (ЛКМ или ПКМ): переместить кнопку", 0.58, 0.64, 0.72)
     GameTooltip:Show()
   end
 end)
@@ -3040,9 +3561,11 @@ local function HookAuctionHouseFrame()
   AuctionHouseFrame:HookScript("OnHide", function()
     state.ahOpen = false
     ForeverSniperDB.autoScan = false
+    if f.presetMenu then f.presetMenu:Hide() end
     ClearPendingDeal()
     UpdateStatus()
     RefreshOverrideBindings()
+    f:Hide()
   end)
   if AuctionHouseFrame:IsShown() then
     state.ahOpen = true
@@ -3078,6 +3601,7 @@ end
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("UPDATE_BINDINGS")
+f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 f:RegisterEvent("AUCTION_HOUSE_SHOW")
 f:RegisterEvent("AUCTION_HOUSE_CLOSED")
 f:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED")
@@ -3089,13 +3613,16 @@ pcall(f.RegisterEvent, f, "COMMODITY_PRICE_UNAVAILABLE")
 f:RegisterEvent("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
 f:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
 
-f:SetScript("OnEvent", function(_, event, arg1)
+f:SetScript("OnEvent", function(_, event, arg1, arg2)
   if event == "PLAYER_LOGIN" then
     EnsureBackgroundSoundCVar()
     RefreshBuyHotkeyCache()
     RefreshSoundBtn()
     RefreshTrackBtn()
     ApplyMiniMode()
+    if ForeverSniperDB.windowPos then
+      ApplyWindowPos(ForeverSniperDB.windowPos)
+    end
     UpdateMinimapPos()
     HookAuctionHouseFrame()
     UpdateStatus()
@@ -3107,6 +3634,8 @@ f:SetScript("OnEvent", function(_, event, arg1)
     RefreshBuyHotkeyCache()
     RefreshBuyButtonText()
     RefreshOverrideBindings()
+  elseif event == "GET_ITEM_INFO_RECEIVED" then
+    if f:IsShown() then RenderWatchlist() end
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
     state.throttled = true
     state.cleanQueryStreak = 0
@@ -3147,13 +3676,26 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "AUCTION_HOUSE_CLOSED" then
     state.ahOpen = false
     ForeverSniperDB.autoScan = false
+    if f.presetMenu then f.presetMenu:Hide() end
     ClearPendingDeal()
     UpdateStatus()
     RefreshOverrideBindings()
+    f:Hide()
   elseif event == "COMMODITY_PRICE_UPDATED" then
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
-      local wasReady = state.pendingDeal.quoteReady
-      state.pendingDeal.quoteReady = true
+      local deal = state.pendingDeal
+      local unitP = tonumber(arg1)
+      local totP = tonumber(arg2)
+      local effUnit = (unitP and unitP > 0) and unitP or ((totP and totP > 0 and (deal.qty or 1) > 0) and math.ceil(totP / math.max(1, deal.qty or 1)) or nil)
+      if effUnit and deal.maxPrice and effUnit > deal.maxPrice then
+        state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЦена выросла выше лимита — отмена|r"
+        RefreshSessionBar()
+        ClearPendingDeal(false, false)
+        state.lastQueryAt = 0
+        return
+      end
+      local wasReady = deal.quoteReady
+      deal.quoteReady = true
       dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
       if not wasReady and IsSoundEnabled() and PlaySound then
         pcall(PlaySound, 8959, "Master")
@@ -3186,9 +3728,10 @@ f:SetScript("OnEvent", function(_, event, arg1)
     state.lastQueryAt = 0
   elseif event == "COMMODITY_SEARCH_RESULTS_UPDATED" and arg1 then
     local itemID = tonumber(arg1)
-    if itemID ~= ForeverSniperDB.selectedID then return end
+    if not itemID or not IsItemTracked(itemID) then return end
     local maxPrice = ForeverSniperDB.watchlist[itemID]
-    if not maxPrice or (state.pendingDeal and state.pendingDeal.stage == "confirm") then return end
+    if not maxPrice then return end
+    if state.pendingDeal and (state.pendingDeal.stage == "confirm" or state.pendingDeal.itemID ~= itemID) then return end
 
     local num = C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 0
     local totalAvail = 0
@@ -3224,9 +3767,18 @@ f:SetScript("OnEvent", function(_, event, arg1)
     state.lastSeenByItem[itemID].lowestPrice = lowestSeen
     state.lastSeenByItem[itemID].availBelow = totalAvail
     state.lastSeenByItem[itemID].updatedAt = GetTime()
+    if lowestSeen and lowestSeen > 0 then
+      local _, floorName = GetItemVisuals(itemID)
+      RecordTelemetryMarketFloor(itemID, lowestSeen, floorName)
+    end
 
     if minUnitPrice and totalAvail > 0 then
       local _, cachedName = GetItemVisuals(itemID)
+      local dealPrices, dealQtys, dealTiers = {}, {}, tierCount
+      for ti = 1, tierCount do
+        dealPrices[ti] = tierPrices[ti]
+        dealQtys[ti] = tierQtys[ti]
+      end
       SetPendingDeal({
         itemID = itemID,
         isCommodity = true,
@@ -3235,7 +3787,16 @@ f:SetScript("OnEvent", function(_, event, arg1)
         maxPrice = maxPrice,
         name = cachedName,
         stage = "ready",
-        exactCostForQty = ComputeTierCost,
+        exactCostForQty = function(wantQty)
+          local rem, sum = wantQty, 0
+          for ti = 1, dealTiers do
+            if rem <= 0 then break end
+            local take = math.min(rem, dealQtys[ti])
+            sum = sum + take * dealPrices[ti]
+            rem = rem - take
+          end
+          return sum
+        end,
       })
       RenderWatchlist()
     else
@@ -3248,11 +3809,12 @@ f:SetScript("OnEvent", function(_, event, arg1)
       state.lastDisplayedDealItem = itemID
       RenderWatchlist()
       if lowestSeen then
+        local _, overNm = GetItemVisuals(itemID)
         local diff = math.max(0, lowestSeen - maxPrice)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
         dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
         dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r")
+        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r  |cff94a3b8·|r  |cfff8fafc" .. overNm .. "|r")
         dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
         dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
         dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))
@@ -3269,9 +3831,10 @@ f:SetScript("OnEvent", function(_, event, arg1)
     end
   elseif event == "ITEM_SEARCH_RESULTS_UPDATED" and arg1 then
     local itemID = arg1.itemID
-    if itemID ~= ForeverSniperDB.selectedID then return end
+    if not itemID or not IsItemTracked(itemID) then return end
     local maxPrice = itemID and ForeverSniperDB.watchlist[itemID]
-    if not maxPrice or (state.pendingDeal and state.pendingDeal.stage == "confirm") then return end
+    if not maxPrice then return end
+    if state.pendingDeal and (state.pendingDeal.stage == "confirm" or state.pendingDeal.itemID ~= itemID) then return end
 
     local num = C_AuctionHouse.GetNumItemSearchResults(arg1) or 0
     local found = false
@@ -3301,6 +3864,10 @@ f:SetScript("OnEvent", function(_, event, arg1)
     state.lastSeenByItem[itemID].lowestPrice = lowestSeen
     state.lastSeenByItem[itemID].availBelow = matchCount
     state.lastSeenByItem[itemID].updatedAt = GetTime()
+    if lowestSeen and lowestSeen > 0 then
+      local _, floorName = GetItemVisuals(itemID)
+      RecordTelemetryMarketFloor(itemID, lowestSeen, floorName)
+    end
 
     if bestAuction then
       local _, cachedName = GetItemVisuals(itemID)
@@ -3327,11 +3894,12 @@ f:SetScript("OnEvent", function(_, event, arg1)
       ClearPendingDeal(true)
       state.lastDisplayedDealItem = itemID
       if lowestSeen then
+        local _, overNm = GetItemVisuals(itemID)
         local diff = math.max(0, lowestSeen - maxPrice)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
         dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
         dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r")
+        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r  |cff94a3b8·|r  |cfff8fafc" .. overNm .. "|r")
         dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
         dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
         dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))
