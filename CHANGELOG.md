@@ -4,6 +4,23 @@
 
 ---
 
+## [2.3.0.29] — 2026-11-26
+### Added & Improved (Bait Posting, Bait Hotkey, Skip-1-Piece Filter, Hyperscroll & Sales Profit Analytics, 0% Ban Risk)
+- **Режим «На живца» (ловушка на аукционе, `ForeverSniper.lua` + `Bindings.xml`):**
+  - Добавлена кнопка **«На живца»** (иконка рыбки) в левую панель инструментов и отдельное окно управления наживками с сохранением списка и цен в `ForeverSniperDB.baits` между сессиями.
+  - Выставление строго **1 штуки** на **минимальный срок** (`BAIT_DURATION = 1`, `PostCommodity` / `PostItem`) в один клик или по **хоткею (`FOREVERSNIPER_BAIT`)** даже с закрытым окном наживки; встроенный захват клавиш/колеса мыши (`Хоткей: ...`) и выбор активной наживки (`★`).
+  - Поддержка двухшагового подтверждения низкой цены (`Подтв. цену!` → `ConfirmPostCommodity` / `ConfirmPostItem`) и проверка `IsThrottledMessageSystemReady()`.
+- **Тогл «Пропуск 1 шт» (`ForeverSniperDB.skipSingleBait`):**
+  - Доступен прямо на левой панели под «На живца» (и синхронизирован с кнопкой в шапке окна «На живца»).
+  - Игнорирует стакаемые лоты (commodities) по `1 шт`, чтобы не клевать на свою/чужую наживку и ловить реальные пачки (`2+ шт`), не затрагивая экипировку и рецепты.
+- **Новая 5-я вкладка `Продажи` в Аналитике (`logFrame`):**
+  - Пассивный учёт продаж с почты (`MAIL_INBOX_UPDATE` + `GetInboxText` + `GetInboxInvoiceInfo` с дедупликацией в `ForeverSniperDB.sales.seenMail`), активных/проданных лотов на АХ (`OWNED_AUCTIONS_UPDATED`) и системного чата (`CHAT_MSG_SYSTEM` / `ERR_AUCTION_SOLD_S`).
+  - Расчёт **выгоды (`Продажа − Покупка`)** и **ROI %** с учётом 5% комиссии АХ: сопоставление выручки со средней ценой покупки из истории снайпера + экспорт `SALE;...`.
+- **Улучшения гиперскролла и защита бюджета (`0% Ban Risk`):**
+  - Проверка `IsThrottledMessageSystemReady()` добавлена перед `ConfirmCommoditiesPurchase` (предотвращает потерю пакета подтверждения при гиперскролле на `Shift + колесо`), увеличен fallback-таймаут до `0.60s` и добавлен `25ms` антидребезг в `ExecuteBuyAction`.
+  - Автоматический расчёт доступного количества по текущему золоту (`GetAffordableQty` / `GetMoney()`) — при нехватке золота на всю пачку выкупается максимально доступное количество штук.
+- **Blizzard ToS Compliance Auditor:** вердикт **`COMPLIANT (0% Ban Risk)`** по всем 6 категориям (строго hardware-events, 1 клик = 1 действие, Lua 5.1 `< 200` locals).
+
 ## [2.2.0.28] — 2026-11-26
 ### Added & Improved (4-Tab ROI Analytics, Inline Preset Popover, Compact Sniper UX & P0/P1 Hardening, 0% Ban Risk)
 - **Полноценная аналитика и ROI в игре (`740 × 596 px`, 4 вкладки):**

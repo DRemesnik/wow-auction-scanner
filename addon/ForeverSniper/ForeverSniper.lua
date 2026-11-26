@@ -5,6 +5,7 @@ BINDING_HEADER_FOREVERSNIPER = "Goblin Broker: Forever"
 BINDING_NAME_FOREVERSNIPER_BUY = "Купить / Подтвердить лот"
 BINDING_NAME_FOREVERSNIPER_SCAN = "Старт / Пауза скана"
 BINDING_NAME_FOREVERSNIPER_TOGGLE = "Показать / Скрыть окно"
+BINDING_NAME_FOREVERSNIPER_BAIT = "Выставить наживку (1 шт)"
 
 ForeverSniperDB = ForeverSniperDB or {
   watchlist = {}, -- [itemID] = maxUnitCopper
@@ -17,6 +18,8 @@ ForeverSniperDB = ForeverSniperDB or {
   soundAlert = true,
   miniMode = false,
   railExpanded = false,
+  activeBaitID = nil,
+  skipSingleBait = false,
   telemetry = { days = {}, items = {}, hours = {} },
 }
 
@@ -639,6 +642,61 @@ importBtn:HookScript("OnEnter", function(self)
 end)
 importBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
 
+-- 4b. Bait Posting ("На живца", shown in Full Mode)
+do
+  local baitBtn = MakeRailButton(importBtn, -5, "Interface\\Icons\\INV_Misc_Fish_02", "На живца")
+  baitBtn:SetColors({ 0.14, 0.10, 0.06, 1 }, { 0.22, 0.16, 0.08, 1 }, { 0.92, 0.70, 0.03, 0.75 }, { 0.99, 0.86, 0.45 })
+  if baitBtn.ico then
+    baitBtn.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  end
+  baitBtn:HookScript("OnEnter", function(self)
+    if ForeverSniperDB.railExpanded then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("На живца (Ловушка)", 0.96, 0.70, 0.03)
+    GameTooltip:AddLine("Выставить 1 шт на мин. срок (2ч/12ч) по заданной цене", 0.85, 0.90, 0.96, true)
+    GameTooltip:Show()
+  end)
+  baitBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+  f._baitBtn = baitBtn
+
+  local skip1Btn = MakeRailButton(baitBtn, -5, "Interface\\Icons\\INV_Misc_Spyglass_02", "Пропуск 1шт: ВЫКЛ")
+  if skip1Btn.ico then
+    skip1Btn.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  end
+  local function RefreshRailSkip1Btn()
+    if ForeverSniperDB.skipSingleBait then
+      skip1Btn:SetColors({ 0.16, 0.12, 0.03, 1 }, { 0.24, 0.18, 0.05, 1 }, { 0.92, 0.70, 0.03, 0.85 }, { 1, 0.94, 0.70 })
+      if skip1Btn.ico then skip1Btn.ico:SetDesaturated(false); skip1Btn.ico:SetAlpha(1) end
+      skip1Btn.railText:SetText("|cfff59e0bПропуск 1шт: ВКЛ|r")
+    else
+      skip1Btn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.45, 0.52, 0.62 })
+      if skip1Btn.ico then skip1Btn.ico:SetDesaturated(true); skip1Btn.ico:SetAlpha(0.45) end
+      skip1Btn.railText:SetText("|cff64748bПропуск 1шт: ВЫКЛ|r")
+    end
+  end
+  skip1Btn:SetScript("OnClick", function()
+    ForeverSniperDB.skipSingleBait = not ForeverSniperDB.skipSingleBait
+    if f._refreshSkip1Btn then f._refreshSkip1Btn() end
+    if ForeverSniperDB.skipSingleBait then
+      print("|cfff59e0bGoblin Broker:|r фильтр «Пропуск 1 шт» |cff10b981ВКЛ|r — игнорируем стакаемые лоты по 1 шт.")
+    else
+      print("|cfff59e0bGoblin Broker:|r фильтр «Пропуск 1 шт» |cff94a3b8ВЫКЛ|r — ловим все лоты.")
+    end
+  end)
+  skip1Btn:HookScript("OnEnter", function(self)
+    if ForeverSniperDB.railExpanded then return end
+    if GameTooltip then
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:AddLine(ForeverSniperDB.skipSingleBait and "Пропуск 1 шт (наживка): ВКЛ" or "Пропуск 1 шт (наживка): ВЫКЛ", 0.96, 0.70, 0.03)
+      GameTooltip:AddLine("Пропускать стакаемые лоты по 1 шт, чтобы ловить реальные пачки (2+ шт).", 0.85, 0.90, 0.96, true)
+      GameTooltip:Show()
+    end
+  end)
+  skip1Btn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  f._skip1Btn = skip1Btn
+  f._refreshRailSkip1Btn = RefreshRailSkip1Btn
+end
+
 -- 5. Keybind / Sniper Hotkey Info (pinned to bottom of rail)
 local hotkeyBtn = MakeRailButton(nil, nil, "Interface\\AddOns\\ForeverSniper\\rail_hotkey.tga", "Клавиши", true)
 hotkeyBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.98, 0.94, 0.54 })
@@ -647,8 +705,10 @@ hotkeyBtn:HookScript("OnEnter", function(self)
   GameTooltip:AddLine("Горячие клавиши", 0.96, 0.70, 0.03)
   local bk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BUY")
   local sk = GetBindingKey and GetBindingKey("FOREVERSNIPER_SCAN")
+  local btk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BAIT")
   GameTooltip:AddDoubleLine("Купить / Подтв.:", bk or "не задана", 0.85, 0.90, 0.96, 0.98, 0.94, 0.54)
   GameTooltip:AddDoubleLine("Старт / Пауза:", sk or "не задана", 0.85, 0.90, 0.96, 0.85, 0.90, 0.96)
+  GameTooltip:AddDoubleLine("Наживка (1 шт):", btk or "не задана", 0.85, 0.90, 0.96, 0.96, 0.70, 0.03)
   GameTooltip:AddLine("Назначить: ESC -> Назначение клавиш -> Goblin Broker", 0.60, 0.72, 0.84, true)
   GameTooltip:Show()
 end)
@@ -1221,14 +1281,16 @@ logExportBtn = CreateFlatButton(nil, logFrame, 118, 24, "Экспорт отчё
 logExportBtn:SetPoint("RIGHT", logClearBtn, "LEFT", -6, 0)
 logExportBtn:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
 
-tabSessionBtn = CreateFlatButton(nil, logFrame, 172, 22, "Сессия")
+tabSessionBtn = CreateFlatButton(nil, logFrame, 136, 22, "Сессия")
 tabSessionBtn:SetPoint("TOPLEFT", 14, -44)
-tabItemsBtn = CreateFlatButton(nil, logFrame, 172, 22, "По товарам")
+tabItemsBtn = CreateFlatButton(nil, logFrame, 136, 22, "По товарам")
 tabItemsBtn:SetPoint("LEFT", tabSessionBtn, "RIGHT", 8, 0)
-tabDaysBtn = CreateFlatButton(nil, logFrame, 172, 22, "По дням")
+tabDaysBtn = CreateFlatButton(nil, logFrame, 136, 22, "По дням")
 tabDaysBtn:SetPoint("LEFT", tabItemsBtn, "RIGHT", 8, 0)
-tabHoursBtn = CreateFlatButton(nil, logFrame, 172, 22, "По часам (24ч)")
+tabHoursBtn = CreateFlatButton(nil, logFrame, 136, 22, "По часам (24ч)")
 tabHoursBtn:SetPoint("LEFT", tabDaysBtn, "RIGHT", 8, 0)
+f._tabSalesBtn = CreateFlatButton(nil, logFrame, 136, 22, "Продажи")
+f._tabSalesBtn:SetPoint("LEFT", tabHoursBtn, "RIGHT", 8, 0)
 
 -- 3 KPI Summary Cards (Qty, Total Spent, Weighted Avg / Win-Rate)
 local function CreateKpiCard(xOffset, w, labelTxt, accentR, accentG, accentB)
@@ -1440,7 +1502,8 @@ local function RefreshLogTabButtons()
   StyleTab(tabItemsBtn, logTab == "items")
   StyleTab(tabDaysBtn, logTab == "days")
   StyleTab(tabHoursBtn, logTab == "hours")
-  logClearBtn:SetLabel(logTab == "session" and "Очистить" or "Сбросить базу")
+  if f._tabSalesBtn then StyleTab(f._tabSalesBtn, logTab == "sales") end
+  logClearBtn:SetLabel((logTab == "session" or logTab == "sales") and "Очистить" or "Сбросить базу")
 end
 
 local function GetAnaRow(i)
@@ -1450,7 +1513,28 @@ local function GetAnaRow(i)
     row:SetSize(684, 24); row:SetBackdrop(FLAT_BACKDROP); row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
     row:EnableMouse(true)
     row:SetScript("OnEnter", function(self)
-      if not GameTooltip or not self.roiItemID then return end
+      if not GameTooltip then return end
+      if self.salesInfo then
+        local si = self.salesInfo
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("|cff10b981" .. (si.name or "Продажа") .. " — Выгода|r")
+        GameTooltip:AddDoubleLine("Продано:", string.format("%d шт (%d сд.)", si.qty or 0, si.deals or 0), 0.85, 0.90, 0.96, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Грязная выручка:", FormatCoinsPlain(si.gross or 0), 0.85, 0.90, 0.96, 0.96, 0.85, 0.45)
+        GameTooltip:AddDoubleLine("Комиссия АХ (5%):", "-" .. FormatCoinsPlain(si.cut or 0), 0.85, 0.90, 0.96, 0.95, 0.35, 0.40)
+        GameTooltip:AddDoubleLine("Чистая выручка:", FormatCoinsPlain(si.net or 0), 0.85, 0.90, 0.96, 0.85, 0.95, 1)
+        if (si.avgBuy or 0) > 0 then
+          GameTooltip:AddDoubleLine("Ср. цена покупки:", FormatCoinsPlain(si.avgBuy), 0.85, 0.90, 0.96, 1, 1, 1)
+          GameTooltip:AddDoubleLine("Ср. продажа (-5%):", FormatCoinsPlain(si.avgSellNet or 0), 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
+          local pCol = (si.profit or 0) >= 0 and {0.06, 0.85, 0.55} or {0.95, 0.35, 0.40}
+          local pSign = (si.profit or 0) >= 0 and "+" or "-"
+          GameTooltip:AddDoubleLine("Чистая выгода:", string.format("%s%s (%+d%%)", pSign, FormatCoinsPlain(math.abs(si.profit or 0)), si.roi or 0), 0.85, 0.90, 0.96, pCol[1], pCol[2], pCol[3])
+        else
+          GameTooltip:AddLine("Нет истории покупок по этому предмету в снайпере", 0.65, 0.72, 0.82)
+        end
+        GameTooltip:Show()
+        return
+      end
+      if not self.roiItemID then return end
       local t = EnsureTelemetryDB()
       local it = t.items and t.items[self.roiItemID]
       if not it then return end
@@ -1500,6 +1584,8 @@ local function GetAnaRow(i)
     row.c7 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c7:SetPoint("RIGHT", -6, 0); row.c7:SetWidth(98); row.c7:SetJustifyH("RIGHT"); row.c7:SetWordWrap(false)
     anaRows[i] = row
   end
+  row.roiItemID = nil
+  row.salesInfo = nil
   return row
 end
 
@@ -1518,6 +1604,122 @@ RenderLogFrame = function()
   end
 
   if not isSession then
+    if logTab == "sales" then
+      local s = f._sales and f._sales.ensure() or { totalQty = 0, totalDeals = 0, totalGross = 0, totalNet = 0, totalCut = 0, byItem = {} }
+      local t = EnsureTelemetryDB()
+      local buyAvgByName = {}
+      for id, it in pairs(t.items or {}) do
+        if (it.qty or 0) > 0 and (it.spent or 0) > 0 then
+          local nm = it.name
+          if not nm or nm == "" then
+            local _, visName = GetItemVisuals(id)
+            nm = visName
+          end
+          if nm and nm ~= "" then
+            buyAvgByName[nm] = math.floor(it.spent / it.qty)
+          end
+        end
+      end
+
+      local skeys = {}
+      local totMatchedProfit, totMatchedCost = 0, 0
+      for nm, it in pairs(s.byItem or {}) do
+        table.insert(skeys, nm)
+        local avgBuy = buyAvgByName[it.name or nm] or 0
+        if avgBuy > 0 and (it.qty or 0) > 0 then
+          local cost = avgBuy * it.qty
+          totMatchedCost = totMatchedCost + cost
+          totMatchedProfit = totMatchedProfit + ((it.net or 0) - cost)
+        end
+      end
+      table.sort(skeys, function(a, b)
+        return (s.byItem[a].net or 0) > (s.byItem[b].net or 0)
+      end)
+
+      if totMatchedCost > 0 then
+        local totRoi = math.floor((totMatchedProfit / totMatchedCost) * 100 + 0.5)
+        local pSign = totMatchedProfit >= 0 and "|cff10b981+" or "|cfff43f5e-"
+        local rCol = totRoi >= 0 and "|cff10b981" or "|cfff43f5e"
+        kpiQtyCard.lbl:SetText("|cff10b981ВЫГОДА (ПРОДАЖА - ПОКУПКА)|r")
+        kpiQtyCard.val:SetFontObject("GameFontNormalLarge")
+        kpiQtyCard.val:SetText(string.format("%s|r%s %s(%+d%%)|r", pSign, FormatCoins(math.abs(totMatchedProfit)), rCol, totRoi))
+      else
+        kpiQtyCard.lbl:SetText("|cff10b981ЧИСТАЯ ВЫРУЧКА (ПОЧТА)|r")
+        kpiQtyCard.val:SetFontObject("GameFontNormalLarge")
+        kpiQtyCard.val:SetText((s.totalNet or 0) > 0 and FormatCoins(s.totalNet) or ("|cff64748b0|r" .. ICON_COPPER))
+      end
+
+      kpiSpentCard.lbl:SetText("|cff94a3b8ПРОДАНО · ВЫРУЧКА (-5%)|r")
+      kpiSpentCard.val:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d) ·|r %s", s.totalQty or 0, s.totalDeals or 0, (s.totalNet or 0) > 0 and FormatCoins(s.totalNet) or ("0" .. ICON_COPPER)))
+
+      local os = state.ownedSummary
+      kpiAvgCard.lbl:SetText("|cff94a3b8НА АУКЦИОНЕ СЕЙЧАС|r")
+      if os then
+        local pendingTxt = (os.soldCount and os.soldCount > 0) and string.format(" |cfff59e0b(+%d продано, 1ч)|r", os.soldCount) or ""
+        kpiAvgCard.val:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d) ·|r %s%s", os.activeQty or 0, os.activeCount or 0, (os.activeValue or 0) > 0 and FormatCoins(os.activeValue) or ("0" .. ICON_COPPER), pendingTxt))
+      else
+        kpiAvgCard.val:SetText("|cff64748bОткройте вкладку Аукционы|r")
+      end
+
+      for _, r in ipairs(anaRows) do r:Hide() end
+      ac1:SetText("|cff94a3b8Предмет|r"); ac2:SetText("|cff94a3b8Продано|r"); ac3:SetText("|cff94a3b8Ср. покупка|r")
+      ac4:SetText("|cff94a3b8Ср. прод(-5%)|r"); ac5:SetText("|cff94a3b8Выручка (-5%)|r")
+      ac6:SetText("|cff94a3b8ROI|r"); ac6:Show()
+      ac7:SetText("|cff94a3b8Выгода|r"); ac7:Show()
+
+      local y = 0
+      for i, nm in ipairs(skeys) do
+        local it = s.byItem[nm]
+        local row = GetAnaRow(i)
+        row.roiItemID = nil
+        local qty = it.qty or 0
+        local net = it.net or 0
+        local avgSellNet = (qty > 0) and math.floor(net / qty) or 0
+        local avgBuy = buyAvgByName[it.name or nm] or 0
+        local profit, roi = 0, 0
+        if avgBuy > 0 and qty > 0 then
+          local cost = avgBuy * qty
+          profit = net - cost
+          roi = math.floor((profit / cost) * 100 + 0.5)
+        end
+        row.salesInfo = {
+          name = it.name or nm, qty = qty, deals = it.deals or 0,
+          gross = it.gross or 0, cut = it.cut or 0, net = net,
+          avgBuy = avgBuy, avgSellNet = avgSellNet, profit = profit, roi = roi,
+        }
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -y)
+        row:SetBackdropColor(i % 2 == 1 and 0.055 or 0.040, i % 2 == 1 and 0.078 or 0.058, i % 2 == 1 and 0.135 or 0.105, 1)
+        row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
+        row.barFill:Hide()
+        row.ico:Hide()
+        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", 8, 0); row.c1:SetWidth(148)
+        row.c1:SetText(it.name or nm); row.c1:SetTextColor(0.95, 0.98, 1)
+        row.c2:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", qty, it.deals or 0))
+        row.c3:SetText(avgBuy > 0 and FormatCoins(avgBuy) or "|cff475569—|r")
+        row.c4:SetText(avgSellNet > 0 and FormatCoins(avgSellNet) or "|cff475569—|r")
+        row.c5:SetText(net > 0 and FormatCoins(net) or "|cff475569—|r")
+        row.c6:Show()
+        if avgBuy > 0 then
+          local rCol = roi >= 0 and "|cff10b981" or "|cfff43f5e"
+          local pSign = profit >= 0 and "|cff10b981+|r" or "|cfff43f5e-|r"
+          row.c6:SetText(string.format("%s%+d%%|r", rCol, roi))
+          row.c7:SetText(pSign .. FormatCoins(math.abs(profit)))
+        else
+          row.c6:SetText("|cff475569—|r")
+          row.c7:SetText("|cff475569—|r")
+        end
+        row.c7:Show()
+        row:Show(); y = y + 26
+      end
+      anaContent:SetHeight(math.max(380, y))
+      anaEmpty:SetText("|cff64748bОткройте почту с выручкой АХ для учёта продаж|r")
+      if y == 0 then anaEmpty:Show() else anaEmpty:Hide() end
+      if anaScrollBar then
+        if y <= 380 then anaScrollBar:Hide() else anaScrollBar:Show() end
+      end
+      return
+    end
+    anaEmpty:SetText("|cff64748bСтатистика пока не накоплена|r")
     local t = EnsureTelemetryDB()
     local totBuys, totQty, totSpent, totSaved, totMissed, totDips, totMktSaved = 0, 0, 0, 0, 0, 0, 0
     for _, d in pairs(t.days or {}) do
@@ -1580,6 +1782,7 @@ RenderLogFrame = function()
       for i, id in ipairs(keys) do
         local it = t.items[id]
         local row = GetAnaRow(i)
+        row.salesInfo = nil
         row.roiItemID = id
         local icon, nm, r, g, b = GetItemVisuals(id)
         local qty = it.qty or 0
@@ -1738,7 +1941,7 @@ RenderLogFrame = function()
     local srow = sumRows[i]
     if not srow then
       srow = CreateFrame("Frame", nil, sumContent, "BackdropTemplate")
-      srow:SetSize(518, 22)
+      srow:SetSize(684, 22)
       srow:SetBackdrop(FLAT_BACKDROP)
       srow:SetBackdropColor(0.055, 0.078, 0.135, 1)
       srow:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.35)
@@ -1748,16 +1951,16 @@ RenderLogFrame = function()
       srow.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
       srow.nm = srow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      srow.nm:SetPoint("LEFT", srow.ico, "RIGHT", 6, 0); srow.nm:SetWidth(200); srow.nm:SetJustifyH("LEFT"); srow.nm:SetWordWrap(false)
+      srow.nm:SetPoint("LEFT", srow.ico, "RIGHT", 6, 0); srow.nm:SetWidth(320); srow.nm:SetJustifyH("LEFT"); srow.nm:SetWordWrap(false)
 
       srow.q = srow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      srow.q:SetPoint("LEFT", srow.nm, "RIGHT", 6, 0); srow.q:SetWidth(68); srow.q:SetJustifyH("RIGHT")
+      srow.q:SetPoint("LEFT", srow.nm, "RIGHT", 6, 0); srow.q:SetWidth(84); srow.q:SetJustifyH("RIGHT")
 
       srow.avg = srow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      srow.avg:SetPoint("LEFT", srow.q, "RIGHT", 8, 0); srow.avg:SetWidth(104); srow.avg:SetJustifyH("RIGHT")
+      srow.avg:SetPoint("LEFT", srow.q, "RIGHT", 8, 0); srow.avg:SetWidth(120); srow.avg:SetJustifyH("RIGHT")
 
       srow.tot = srow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      srow.tot:SetPoint("RIGHT", -6, 0); srow.tot:SetWidth(90); srow.tot:SetJustifyH("RIGHT")
+      srow.tot:SetPoint("RIGHT", -6, 0); srow.tot:SetWidth(104); srow.tot:SetJustifyH("RIGHT")
 
       sumRows[i] = srow
     end
@@ -1792,7 +1995,7 @@ RenderLogFrame = function()
     local row = logRows[idx]
     if not row then
       row = CreateFrame("Frame", nil, logContent, "BackdropTemplate")
-      row:SetSize(518, rowH)
+      row:SetSize(684, rowH)
       row:SetBackdrop(FLAT_BACKDROP)
       row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
       row:EnableMouse(true)
@@ -1828,23 +2031,23 @@ RenderLogFrame = function()
     end)
 
       row.t = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.t:SetPoint("LEFT", 6, 0); row.t:SetWidth(52); row.t:SetJustifyH("LEFT")
+      row.t:SetPoint("LEFT", 6, 0); row.t:SetWidth(56); row.t:SetJustifyH("LEFT")
 
       row.ico = row:CreateTexture(nil, "ARTWORK")
       row.ico:SetSize(16, 16); row.ico:SetPoint("LEFT", row.t, "RIGHT", 6, 0)
       row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
       row.nm = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.nm:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.nm:SetWidth(202); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
+      row.nm:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.nm:SetWidth(308); row.nm:SetJustifyH("LEFT"); row.nm:SetWordWrap(false)
 
       row.q = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.q:SetPoint("LEFT", row.nm, "RIGHT", 6, 0); row.q:SetWidth(44); row.q:SetJustifyH("RIGHT"); row.q:SetWordWrap(false)
+      row.q:SetPoint("LEFT", row.nm, "RIGHT", 6, 0); row.q:SetWidth(54); row.q:SetJustifyH("RIGHT"); row.q:SetWordWrap(false)
 
       row.u = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.u:SetPoint("LEFT", row.q, "RIGHT", 6, 0); row.u:SetWidth(80); row.u:SetJustifyH("RIGHT"); row.u:SetWordWrap(false)
+      row.u:SetPoint("LEFT", row.q, "RIGHT", 6, 0); row.u:SetWidth(98); row.u:SetJustifyH("RIGHT"); row.u:SetWordWrap(false)
 
       row.tot = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.tot:SetPoint("RIGHT", -6, 0); row.tot:SetWidth(82); row.tot:SetJustifyH("RIGHT"); row.tot:SetWordWrap(false)
+      row.tot:SetPoint("RIGHT", -6, 0); row.tot:SetWidth(104); row.tot:SetJustifyH("RIGHT"); row.tot:SetWordWrap(false)
 
       logRows[idx] = row
     end
@@ -1955,6 +2158,159 @@ tabSessionBtn:SetScript("OnClick", function() logTab = "session"; RenderLogFrame
 tabItemsBtn:SetScript("OnClick", function() logTab = "items"; RenderLogFrame() end)
 tabDaysBtn:SetScript("OnClick", function() logTab = "days"; RenderLogFrame() end)
 tabHoursBtn:SetScript("OnClick", function() logTab = "hours"; RenderLogFrame() end)
+if f._tabSalesBtn then f._tabSalesBtn:SetScript("OnClick", function() logTab = "sales"; RenderLogFrame() end) end
+
+-- Passive Sales Tracker (Mailbox Invoices + Owned Auctions + System Sale Chat, 0% Ban Risk)
+do
+  local function EnsureSalesDB()
+    ForeverSniperDB.sales = ForeverSniperDB.sales or {
+      totalQty = 0,
+      totalDeals = 0,
+      totalGross = 0,
+      totalNet = 0,
+      totalCut = 0,
+      byItem = {},
+      history = {},
+      seenMail = {},
+    }
+    local s = ForeverSniperDB.sales
+    s.byItem = s.byItem or {}
+    s.history = s.history or {}
+    s.seenMail = s.seenMail or {}
+    return s
+  end
+
+  local errSoldPat = nil
+  if type(ERR_AUCTION_SOLD_S) == "string" and ERR_AUCTION_SOLD_S ~= "" then
+    errSoldPat = "^" .. ERR_AUCTION_SOLD_S:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%%%s", "(.+)") .. "$"
+  end
+
+  local function OnMailInboxUpdate()
+    if not GetInboxNumItems or not GetInboxHeaderInfo or not GetInboxInvoiceInfo then return end
+    local s = EnsureSalesDB()
+    local nowSec = time and time() or 0
+    -- Prune old deduplication keys (> 35 days)
+    for k, ts in pairs(s.seenMail) do
+      if nowSec > 0 and (nowSec - ts) > 3024000 then
+        s.seenMail[k] = nil
+      end
+    end
+
+    local num = GetInboxNumItems() or 0
+    local occCounts = {}
+    local newlyAdded = 0
+    local newlyNet = 0
+
+    for i = 1, num do
+      local _, _, _, _, money, _, daysLeft, _, wasRead, _, _, _, isGM = GetInboxHeaderInfo(i)
+      if (tonumber(money) or 0) > 0 and not wasRead and not isGM and GetInboxText then
+        pcall(GetInboxText, i)
+      end
+      local invoiceType, itemName, playerName, bid, buyout, deposit, consignment, _, _, _, count = GetInboxInvoiceInfo(i)
+      if invoiceType == "seller" and itemName and itemName ~= "" then
+        local qty = tonumber(count) or 1
+        local gross = tonumber(buyout) or tonumber(bid) or 0
+        local cut = tonumber(consignment) or 0
+        local net = (gross > 0) and math.max(0, gross - cut) or (tonumber(money) or 0)
+        if gross == 0 and net > 0 then gross = net + cut end
+        local dayBucket = math.floor((tonumber(daysLeft) or 30) * 24)
+        local sig = string.format("%s|%s|%d|%d|%d", itemName, playerName or "", qty, gross, dayBucket)
+        occCounts[sig] = (occCounts[sig] or 0) + 1
+        local uniqKey = sig .. "#" .. occCounts[sig]
+        if not s.seenMail[uniqKey] and net > 0 then
+          s.seenMail[uniqKey] = nowSec
+          s.totalQty = (s.totalQty or 0) + qty
+          s.totalDeals = (s.totalDeals or 0) + 1
+          s.totalGross = (s.totalGross or 0) + gross
+          s.totalCut = (s.totalCut or 0) + cut
+          s.totalNet = (s.totalNet or 0) + net
+          local it = s.byItem[itemName]
+          if not it then
+            it = { name = itemName, qty = 0, deals = 0, gross = 0, cut = 0, net = 0 }
+            s.byItem[itemName] = it
+          end
+          it.qty = (it.qty or 0) + qty
+          it.deals = (it.deals or 0) + 1
+          it.gross = (it.gross or 0) + gross
+          it.cut = (it.cut or 0) + cut
+          it.net = (it.net or 0) + net
+          table.insert(s.history, 1, {
+            timeStr = date and date("%H:%M:%S") or "",
+            dateStr = TodayKey(),
+            name = itemName,
+            qty = qty,
+            gross = gross,
+            cut = cut,
+            net = net,
+            buyer = playerName or "",
+          })
+          if #s.history > 100 then table.remove(s.history) end
+          newlyAdded = newlyAdded + qty
+          newlyNet = newlyNet + net
+        end
+      end
+    end
+
+    if newlyAdded > 0 then
+      print(string.format("|cff10b981Goblin Broker [Продажи]:|r учтено %d шт из почты (+%s чистыми).", newlyAdded, FormatCoinsPlain(newlyNet)))
+      if logFrame:IsShown() and logTab == "sales" then
+        RenderLogFrame()
+      end
+    end
+  end
+
+  local function OnOwnedAuctionsUpdated()
+    if not C_AuctionHouse or not C_AuctionHouse.GetNumOwnedAuctions or not C_AuctionHouse.GetOwnedAuctionInfo then return end
+    local num = C_AuctionHouse.GetNumOwnedAuctions() or 0
+    local activeCount, activeQty, activeValue = 0, 0, 0
+    local soldCount, soldValue = 0, 0
+    local soldStatus = (Enum and Enum.AuctionStatus and Enum.AuctionStatus.Sold) or 1
+    for i = 1, num do
+      local info = C_AuctionHouse.GetOwnedAuctionInfo(i)
+      if info then
+        local q = info.quantity or 1
+        local amt = info.buyoutAmount or info.bidAmount or 0
+        if info.status == soldStatus then
+          soldCount = soldCount + 1
+          soldValue = soldValue + (amt * q)
+        else
+          activeCount = activeCount + 1
+          activeQty = activeQty + q
+          activeValue = activeValue + (amt * q)
+        end
+      end
+    end
+    state.ownedSummary = {
+      activeCount = activeCount,
+      activeQty = activeQty,
+      activeValue = activeValue,
+      soldCount = soldCount,
+      soldValue = soldValue,
+    }
+    if logFrame:IsShown() and logTab == "sales" then
+      RenderLogFrame()
+    end
+  end
+
+  local function OnSystemSaleChat(msg)
+    if not errSoldPat or type(msg) ~= "string" then return end
+    local soldName = msg:match(errSoldPat)
+    if soldName and soldName ~= "" then
+      state.sessionBuys.lastOutcome = DOT_GREEN .. " |cff10b981Продано:|r " .. soldName
+      RefreshSessionBar()
+      if IsSoundEnabled() and PlaySound then
+        pcall(PlaySound, 120, "Master")
+      end
+    end
+  end
+
+  f._sales = {
+    ensure = EnsureSalesDB,
+    onMailInboxUpdate = OnMailInboxUpdate,
+    onOwnedAuctionsUpdated = OnOwnedAuctionsUpdated,
+    onSystemChat = OnSystemSaleChat,
+  }
+end
 
 logExportBtn:SetScript("OnClick", function()
   local t = EnsureTelemetryDB()
@@ -1968,6 +2324,13 @@ logExportBtn:SetScript("OnClick", function()
     table.insert(lines, string.format("ITEM;%d;%s;buys=%d;qty=%d;missed=%d;dips=%d;spent=%d;avgFloor=%d;mktSaved=%d",
       id, it.name or "", it.buys or 0, it.qty or 0, it.missed or 0, it.dips or 0, it.spent or 0, avgFloor, it.mktSaved or 0))
   end
+  if f._sales and f._sales.ensure then
+    local s = f._sales.ensure()
+    for _, it in pairs(s.byItem or {}) do
+      table.insert(lines, string.format("SALE;%s;qty=%d;deals=%d;gross=%d;cut=%d;net=%d",
+        it.name or "", it.qty or 0, it.deals or 0, it.gross or 0, it.cut or 0, it.net or 0))
+    end
+  end
   OpenExportModal("Экспорт аналитики", table.concat(lines, "\n"))
   print("|cff06b6d4Goblin Broker:|r экспорт аналитики готов — скопируйте Ctrl+C.")
 end)
@@ -1975,6 +2338,10 @@ end)
 logClearBtn:SetScript("OnClick", function()
   if logTab == "session" then
     ClearSessionHistory()
+  elseif logTab == "sales" then
+    ForeverSniperDB.sales = { totalQty = 0, totalDeals = 0, totalGross = 0, totalNet = 0, totalCut = 0, byItem = {}, history = {}, seenMail = {} }
+    RenderLogFrame()
+    print("|cff94a3b8Goblin Broker:|r статистика продаж очищена.")
   else
     ForeverSniperDB.telemetry = { days = {}, items = {}, hours = {} }
     RenderLogFrame()
@@ -2069,6 +2436,8 @@ local function ApplyMiniMode()
     cfgCard:Hide()
     railDiv:Hide()
     importBtn:Hide()
+    if f._baitBtn then f._baitBtn:Hide() end
+    if f._skip1Btn then f._skip1Btn:Hide() end
     wlBox:Hide()
     if f.presetMenu then f.presetMenu:Hide() end
     dealCard:ClearAllPoints()
@@ -2082,6 +2451,8 @@ local function ApplyMiniMode()
     presetBar:Show()
     railDiv:Show()
     importBtn:Show()
+    if f._baitBtn then f._baitBtn:Show() end
+    if f._skip1Btn then f._skip1Btn:Show() end
     wlBox:Show()
     SetCfgOpen(isCfgOpen)
     f.miniContextText:Hide()
@@ -2618,8 +2989,35 @@ end
 
 -- Fast buy flow (shared between mouse click and direct keybinding)
 local function ExecuteBuyAction(mouseButton)
+  local now = GetTime()
+  if (now - (state.lastBuyExecAt or 0)) < 0.025 then return end
+  state.lastBuyExecAt = now
   local deal = state.pendingDeal
   if not deal or not state.ahOpen then return end
+
+  local function GetAffordableQty(d, desiredQty)
+    local qty = math.max(1, desiredQty or 1)
+    if not GetMoney then return qty end
+    local myMoney = GetMoney() or 0
+    local costFn = d.exactCostForQty
+    local unitP = d.unitPrice or 0
+    local fullCost = costFn and costFn(qty) or (unitP * qty)
+    if fullCost <= myMoney then return qty end
+    local oneCost = costFn and costFn(1) or unitP
+    if oneCost > myMoney then return 0 end
+    local lo, hi, best = 1, qty, 1
+    while lo <= hi do
+      local mid = math.floor((lo + hi) / 2)
+      local c = costFn and costFn(mid) or (unitP * mid)
+      if c <= myMoney then
+        best = mid
+        lo = mid + 1
+      else
+        hi = mid - 1
+      end
+    end
+    return best
+  end
 
   if mouseButton == "RightButton" then
     ClearPendingDeal(false, true)
@@ -2631,6 +3029,10 @@ local function ExecuteBuyAction(mouseButton)
   local chosenQty = math.max(1, effectiveMax)
 
   if not deal.isCommodity then
+    if GetMoney and (GetMoney() or 0) < (deal.unitPrice or 0) then
+      dealBadge:SetText("|cfff43f5eНЕДОСТАТОЧНО ЗОЛОТА!|r")
+      return
+    end
     -- Execute PlaceBid FIRST for minimum latency, then record UI/receipt
     C_AuctionHouse.PlaceBid(deal.auctionID, deal.unitPrice)
     state.pauseScanUntil = GetTime() + 0.6
@@ -2650,6 +3052,11 @@ local function ExecuteBuyAction(mouseButton)
   end
 
   if deal.stage == "ready" then
+    chosenQty = GetAffordableQty(deal, chosenQty)
+    if chosenQty < 1 then
+      dealBadge:SetText("|cfff43f5eНЕДОСТАТОЧНО ЗОЛОТА!|r")
+      return
+    end
     if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
       dealBadge:SetText("|cfff59e0bСЛОТ АХ ЗАНЯТ — НАЖМИТЕ ЕЩЁ РАЗ|r")
       return
@@ -2666,9 +3073,19 @@ local function ExecuteBuyAction(mouseButton)
   end
 
   if deal.stage == "confirm" then
-    -- Wait for server COMMODITY_PRICE_UPDATED quote (~50ms), with 0.35s lag fallback
-    if not deal.quoteReady and (GetTime() - (deal.confirmAt or 0)) < 0.35 then
-      dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
+    -- Wait for server COMMODITY_PRICE_UPDATED quote (~50ms), with 0.60s lag fallback
+    if not deal.quoteReady and (GetTime() - (deal.confirmAt or 0)) < 0.60 then
+      if not deal.waitBadgeShown then
+        deal.waitBadgeShown = true
+        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
+      end
+      return
+    end
+    if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+      if not deal.throttleBadgeShown then
+        deal.throttleBadgeShown = true
+        dealBadge:SetText("|cfff59e0bСЛОТ АХ ЗАНЯТ — ЖМЁМ...|r")
+      end
       return
     end
     local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
@@ -2750,6 +3167,9 @@ idInput:HookScript("OnEditFocusLost", function()
 end)
 
 local function TryInsertItemLink(link)
+  if f._tryBaitInsert and f._tryBaitInsert(link) then
+    return
+  end
   if (idInput:HasFocus() or (GetTime() - lastIdFocusAt) < 0.25) and type(link) == "string" then
     local itemID = link:match("item:(%d+)")
     if itemID then
@@ -2974,6 +3394,674 @@ impAdd:SetScript("OnClick", function() RunImport(false) end)
 importBtn:SetScript("OnClick", OpenImportModal)
 
 -- ============================================================================
+-- Bait Posting ("На живца"): Post 1 unit at minimum duration (2h/12h)
+-- ============================================================================
+do
+local function EnsureBaitsDB()
+  ForeverSniperDB.baits = ForeverSniperDB.baits or {}
+  return ForeverSniperDB.baits
+end
+local baitModal, RenderBaitList
+local BAIT_QTY = 1
+local BAIT_DURATION = 1 -- Shortest AH duration tier (1 = min tier: 2h/12h)
+
+local function FindBagItemLocation(itemID)
+  if not itemID then return nil, 0 end
+  local getNumSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
+  local getItemID = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
+  local getInfo = C_Container and C_Container.GetContainerItemInfo
+  if not getNumSlots then return nil, 0 end
+
+  local totalCount = 0
+  local firstLoc = nil
+  local maxBag = (NUM_BAG_SLOTS or 4) + 2
+  for bag = 0, maxBag do
+    local slots = getNumSlots(bag) or 0
+    for slot = 1, slots do
+      local slotItemID, count, isBound = nil, 1, false
+      if getInfo then
+        local info = getInfo(bag, slot)
+        if info then
+          slotItemID = info.itemID
+          count = info.stackCount or 1
+          isBound = not not info.isBound
+        end
+      end
+      if not slotItemID and getItemID then
+        slotItemID = getItemID(bag, slot)
+        if slotItemID and GetContainerItemInfo then
+          local _, c = GetContainerItemInfo(bag, slot)
+          if c then count = c end
+        end
+      end
+      if slotItemID == itemID then
+        local loc = ItemLocation and ItemLocation.CreateFromBagAndSlot and ItemLocation:CreateFromBagAndSlot(bag, slot)
+        if (not isBound) and loc and C_Item and C_Item.IsBound then
+          local okB, bRes = pcall(C_Item.IsBound, loc)
+          if okB and bRes then isBound = true end
+        end
+        if not isBound then
+          totalCount = totalCount + (count or 1)
+          if not firstLoc and loc then
+            firstLoc = loc
+          end
+        end
+      end
+    end
+  end
+  return firstLoc, totalCount
+end
+
+local function IsBaitCommodity(itemID)
+  if C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo and C_AuctionHouse.MakeItemKey then
+    local info = C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
+    if info and info.isCommodity ~= nil then
+      return info.isCommodity
+    end
+  end
+  if GetItemInfo then
+    local _, _, _, _, _, _, _, maxStack = GetItemInfo(itemID)
+    if maxStack then
+      return maxStack > 1
+    end
+  end
+  return true
+end
+
+local baitModalFrame = CreateFrame("Frame", "ForeverSniperBaitFrame", UIParent, "BackdropTemplate")
+baitModal = baitModalFrame
+baitModal:SetSize(560, 440)
+baitModal:SetPoint("CENTER")
+baitModal:SetFrameStrata("DIALOG")
+baitModal:SetMovable(true)
+baitModal:EnableMouse(true)
+baitModal:RegisterForDrag("LeftButton")
+baitModal:SetScript("OnDragStart", baitModal.StartMoving)
+baitModal:SetScript("OnDragStop", baitModal.StopMovingOrSizing)
+baitModal:SetBackdrop(FLAT_BACKDROP)
+baitModal:SetBackdropColor(0.043, 0.059, 0.098, 0.98)
+baitModal:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.75)
+AttachDropShadow(baitModal, 10, 0.6)
+baitModal:Hide()
+
+local baitTitle = baitModal:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+baitTitle:SetPoint("TOPLEFT", 16, -14)
+baitTitle:SetText("|cfff59e0bНа живца|r |cff94a3b8(1 шт)|r")
+
+local baitCloseBtn = CreateFlatButton(nil, baitModal, 24, 22, "X")
+baitCloseBtn:SetPoint("TOPRIGHT", -12, -12)
+baitCloseBtn:SetColors({ 0.12, 0.16, 0.24, 1 }, { 0.25, 0.14, 0.18, 1 }, { 0.30, 0.36, 0.48, 0.8 }, { 0.85, 0.90, 0.96 })
+baitCloseBtn:SetScript("OnClick", function() baitModal:Hide() end)
+
+local baitHotkeyBtn = CreateFlatButton(nil, baitModal, 144, 22, "Хоткей: нет")
+baitHotkeyBtn:SetPoint("RIGHT", baitCloseBtn, "LEFT", -6, 0)
+baitHotkeyBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.75 }, { 0.98, 0.94, 0.54 })
+baitHotkeyBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+
+local baitSkip1Btn = CreateFlatButton(nil, baitModal, 134, 22, "Пропуск 1шт: ВЫКЛ")
+baitSkip1Btn:SetPoint("RIGHT", baitHotkeyBtn, "LEFT", -6, 0)
+local function RefreshBaitSkip1Btn()
+  if ForeverSniperDB.skipSingleBait then
+    baitSkip1Btn:SetLabel("Пропуск 1шт: |cff10b981ВКЛ|r")
+    baitSkip1Btn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.85 }, { 0.85, 1, 0.94 })
+  else
+    baitSkip1Btn:SetLabel("Пропуск 1шт: |cff64748bВЫКЛ|r")
+    baitSkip1Btn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
+  end
+  if f._refreshRailSkip1Btn then f._refreshRailSkip1Btn() end
+end
+baitSkip1Btn:SetScript("OnClick", function()
+  ForeverSniperDB.skipSingleBait = not ForeverSniperDB.skipSingleBait
+  RefreshBaitSkip1Btn()
+end)
+baitSkip1Btn:HookScript("OnEnter", function(self)
+  if not GameTooltip then return end
+  GameTooltip:SetOwner(self, "ANCHOR_TOP")
+  GameTooltip:AddLine("Пропуск лотов по 1 шт (снайпер)", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Когда ВКЛ — снайпер игнорирует стакаемые лоты по 1 шт, чтобы не клевать на свою/чужую наживку и ловить реальные пачки (2+ шт).", 0.85, 0.90, 0.96, true)
+  GameTooltip:Show()
+end)
+baitSkip1Btn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+f._refreshSkip1Btn = RefreshBaitSkip1Btn
+
+local baitCapturingKey = false
+local function RefreshBaitHotkeyBtn()
+  if baitCapturingKey then
+    baitHotkeyBtn:SetLabel("|cfffef08aНажмите клавишу...|r")
+    baitHotkeyBtn:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.55, 0.38, 0.03, 1 }, { 0.96, 0.78, 0.12, 0.95 }, { 1, 0.98, 0.85 })
+    return
+  end
+  local k = GetBindingKey and GetBindingKey("FOREVERSNIPER_BAIT")
+  if k and k ~= "" then
+    baitHotkeyBtn:SetLabel("Хоткей: |cfffef08a" .. k .. "|r")
+  else
+    baitHotkeyBtn:SetLabel("Хоткей: |cff64748bне задан|r")
+  end
+  baitHotkeyBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.75 }, { 0.98, 0.94, 0.54 })
+end
+
+local function StopBaitKeyCapture()
+  baitCapturingKey = false
+  baitHotkeyBtn:EnableKeyboard(false)
+  baitHotkeyBtn:EnableMouseWheel(false)
+  RefreshBaitHotkeyBtn()
+end
+
+local function ApplyBaitBindingCombo(combo)
+  if InCombatLockdown and InCombatLockdown() then
+    print("|cfff43f5eGoblin Broker:|r нельзя менять клавиши в бою.")
+    StopBaitKeyCapture()
+    return
+  end
+  if GetBindingKey and SetBinding then
+    local old1, old2 = GetBindingKey("FOREVERSNIPER_BAIT")
+    if old1 then SetBinding(old1, nil) end
+    if old2 then SetBinding(old2, nil) end
+    if combo and combo ~= "" then
+      SetBinding(combo, "FOREVERSNIPER_BAIT")
+    end
+    if SaveBindings and GetCurrentBindingSet then
+      pcall(SaveBindings, GetCurrentBindingSet())
+    end
+  end
+  StopBaitKeyCapture()
+end
+
+baitHotkeyBtn:SetScript("OnClick", function(self, btn)
+  if btn == "RightButton" then
+    ApplyBaitBindingCombo(nil)
+    print("|cfff59e0bGoblin Broker [На живца]:|r хоткей сброшен.")
+    return
+  end
+  if baitCapturingKey then
+    StopBaitKeyCapture()
+    return
+  end
+  baitCapturingKey = true
+  self:EnableKeyboard(true)
+  self:EnableMouseWheel(true)
+  RefreshBaitHotkeyBtn()
+end)
+
+baitHotkeyBtn:SetScript("OnKeyDown", function(_, key)
+  if not baitCapturingKey then return end
+  if key == "ESCAPE" then
+    StopBaitKeyCapture()
+    return
+  end
+  if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
+    return
+  end
+  local prefix = ((IsShiftKeyDown and IsShiftKeyDown()) and "SHIFT-" or "")
+    .. ((IsControlKeyDown and IsControlKeyDown()) and "CTRL-" or "")
+    .. ((IsAltKeyDown and IsAltKeyDown()) and "ALT-" or "")
+  ApplyBaitBindingCombo(prefix .. key)
+end)
+
+baitHotkeyBtn:SetScript("OnMouseWheel", function(_, delta)
+  if not baitCapturingKey then return end
+  local prefix = ((IsShiftKeyDown and IsShiftKeyDown()) and "SHIFT-" or "")
+    .. ((IsControlKeyDown and IsControlKeyDown()) and "CTRL-" or "")
+    .. ((IsAltKeyDown and IsAltKeyDown()) and "ALT-" or "")
+  ApplyBaitBindingCombo(prefix .. (delta > 0 and "MOUSEWHEELUP" or "MOUSEWHEELDOWN"))
+end)
+
+baitHotkeyBtn:HookScript("OnEnter", function(self)
+  if not GameTooltip then return end
+  GameTooltip:SetOwner(self, "ANCHOR_TOP")
+  GameTooltip:AddLine("Хоткей «На живца»", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("ЛКМ: назначить клавишу или колесо мыши", 0.85, 0.90, 0.96)
+  GameTooltip:AddLine("ПКМ: сбросить клавишу", 0.65, 0.75, 0.85)
+  GameTooltip:AddLine("Выставляет 1 шт выбранной (★) наживки без открытия этого окна.", 0.60, 0.72, 0.84, true)
+  GameTooltip:Show()
+end)
+baitHotkeyBtn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+baitModal:HookScript("OnHide", function()
+  if baitCapturingKey then StopBaitKeyCapture() end
+end)
+baitModal.RefreshHotkey = RefreshBaitHotkeyBtn
+
+local baitHint = baitModal:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitHint:SetPoint("TOPLEFT", 16, -38)
+baitHint:SetPoint("TOPRIGHT", -16, -38)
+baitHint:SetJustifyH("LEFT")
+baitHint:SetText("|cff94a3b8Перетащите предмет из сумки или введите ID и цену. Клик «Выставить 1 шт» ставит ровно 1 шт на минимальный срок.|r")
+
+-- Add / Edit Card inside baitModal
+local baitEditCard = CreateFrame("Frame", nil, baitModal, "BackdropTemplate")
+baitEditCard:SetPoint("TOPLEFT", 14, -64)
+baitEditCard:SetPoint("TOPRIGHT", -14, -64)
+baitEditCard:SetHeight(86)
+baitEditCard:SetBackdrop(FLAT_BACKDROP)
+baitEditCard:SetBackdropColor(0.067, 0.094, 0.153, 1)
+baitEditCard:SetBackdropBorderColor(0.16, 0.23, 0.35, 1)
+
+local baitIconFrame = CreateFrame("Button", nil, baitEditCard, "BackdropTemplate")
+baitIconFrame:SetSize(36, 36)
+baitIconFrame:SetPoint("TOPLEFT", 10, -10)
+baitIconFrame:SetBackdrop(FLAT_BACKDROP)
+baitIconFrame:SetBackdropColor(0.03, 0.04, 0.08, 1)
+baitIconFrame:SetBackdropBorderColor(0.25, 0.35, 0.50, 1)
+
+local baitIconTex = baitIconFrame:CreateTexture(nil, "ARTWORK")
+baitIconTex:SetPoint("TOPLEFT", 2, -2)
+baitIconTex:SetPoint("BOTTOMRIGHT", -2, 2)
+baitIconTex:SetTexture("Interface\\Icons\\INV_Misc_Fish_02")
+baitIconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+local baitNameText = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+baitNameText:SetPoint("TOPLEFT", baitIconFrame, "TOPRIGHT", 10, -1)
+baitNameText:SetPoint("RIGHT", -12, 0)
+baitNameText:SetJustifyH("LEFT")
+baitNameText:SetText("|cff94a3b8Выберите предмет для наживки|r")
+
+local baitSubText = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitSubText:SetPoint("TOPLEFT", baitNameText, "BOTTOMLEFT", 0, -3)
+baitSubText:SetPoint("RIGHT", -12, 0)
+baitSubText:SetJustifyH("LEFT")
+baitSubText:SetText("|cff64748bПеретащите из сумки на иконку, Shift+клик или введите ID|r")
+
+local baitIdLabel = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitIdLabel:SetPoint("BOTTOMLEFT", 10, 12)
+baitIdLabel:SetText("|cff94a3b8ID:|r")
+
+local baitIdInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
+StyleFlatBox(baitIdInput, 76, 22)
+baitIdInput:SetPoint("LEFT", baitIdLabel, "RIGHT", 6, 0)
+baitIdInput:SetNumeric(true)
+baitIdInput:SetJustifyH("CENTER")
+
+local baitLastIdFocusAt = 0
+baitIdInput:HookScript("OnEditFocusGained", function() baitLastIdFocusAt = GetTime() end)
+baitIdInput:HookScript("OnEditFocusLost", function() baitLastIdFocusAt = GetTime() end)
+
+local baitPriceLabel = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitPriceLabel:SetPoint("LEFT", baitIdInput, "RIGHT", 12, 0)
+baitPriceLabel:SetText("|cff94a3b8Цена:|r")
+
+local baitGoldInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
+StyleFlatBox(baitGoldInput, 54, 22)
+baitGoldInput:SetPoint("LEFT", baitPriceLabel, "RIGHT", 6, 0)
+baitGoldInput:SetNumeric(true)
+baitGoldInput:SetJustifyH("RIGHT")
+
+local baitGUnit = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitGUnit:SetPoint("LEFT", baitGoldInput, "RIGHT", 3, 0)
+baitGUnit:SetText("|cffffd700з|r")
+
+local baitSilverInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
+StyleFlatBox(baitSilverInput, 36, 22)
+baitSilverInput:SetPoint("LEFT", baitGUnit, "RIGHT", 6, 0)
+baitSilverInput:SetNumeric(true)
+baitSilverInput:SetMaxLetters(2)
+baitSilverInput:SetJustifyH("RIGHT")
+
+local baitSUnit = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitSUnit:SetPoint("LEFT", baitSilverInput, "RIGHT", 3, 0)
+baitSUnit:SetText("|cffc7c7cfс|r")
+
+local baitCopperInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
+StyleFlatBox(baitCopperInput, 36, 22)
+baitCopperInput:SetPoint("LEFT", baitSUnit, "RIGHT", 6, 0)
+baitCopperInput:SetNumeric(true)
+baitCopperInput:SetMaxLetters(2)
+baitCopperInput:SetJustifyH("RIGHT")
+
+local baitCUnit = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitCUnit:SetPoint("LEFT", baitCopperInput, "RIGHT", 3, 0)
+baitCUnit:SetText("|cffeda55fм|r")
+
+local baitSaveBtn = CreateFlatButton(nil, baitEditCard, 98, 22, "Сохранить")
+baitSaveBtn:SetPoint("RIGHT", -10, 0)
+baitSaveBtn:SetPoint("CENTER", baitCopperInput, "CENTER", 0, 0)
+baitSaveBtn:ClearAllPoints()
+baitSaveBtn:SetPoint("RIGHT", baitEditCard, "RIGHT", -10, 0)
+baitSaveBtn:SetPoint("TOP", baitIdInput, "TOP", 0, 0)
+baitSaveBtn:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.62, 0.44, 0.03, 1 }, { 0.92, 0.70, 0.03, 0.9 }, { 1, 0.96, 0.85 })
+
+local function ApplyBaitPreviewItemID(itemID, presetCopper)
+  local id = tonumber(itemID)
+  if not id or id <= 0 then return false end
+  baitIdInput:SetText(tostring(id))
+  local icon, nm, r, g, b = GetItemVisuals(id)
+  baitIconTex:SetTexture(icon)
+  baitIconFrame:SetBackdropBorderColor(r, g, b, 0.9)
+  baitNameText:SetText(nm)
+  baitNameText:SetTextColor(r, g, b)
+  local _, bagCount = FindBagItemLocation(id)
+  baitSubText:SetText(string.format("|cff64748bID %d  |  В сумках: |r%s%d шт|r", id, bagCount > 0 and "|cff10b981" or "|cfff43f5e", bagCount))
+  local existing = presetCopper or EnsureBaitsDB()[id]
+  if existing and existing > 0 then
+    local gVal = math.floor(existing / 10000)
+    local sVal = math.floor((existing % 10000) / 100)
+    local cVal = existing % 100
+    baitGoldInput:SetText(gVal > 0 and tostring(gVal) or "")
+    baitSilverInput:SetText(sVal > 0 and tostring(sVal) or "")
+    baitCopperInput:SetText(cVal > 0 and tostring(cVal) or "")
+  else
+    baitGoldInput:SetText("")
+    baitSilverInput:SetText("")
+    baitCopperInput:SetText("")
+  end
+  baitGoldInput:SetFocus()
+  return true
+end
+
+local function PreviewBaitDraggedItem()
+  if not GetCursorInfo then return false end
+  local kind, itemID = GetCursorInfo()
+  if kind == "item" and itemID then
+    ClearCursor()
+    return ApplyBaitPreviewItemID(itemID)
+  end
+  return false
+end
+
+baitIconFrame:SetScript("OnReceiveDrag", PreviewBaitDraggedItem)
+baitIconFrame:SetScript("OnClick", PreviewBaitDraggedItem)
+baitIconFrame:SetScript("OnEnter", function(self)
+  local sel = tonumber(baitIdInput:GetText())
+  if GameTooltip then
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if sel and sel > 0 then
+      GameTooltip:SetItemByID(sel)
+      GameTooltip:AddLine(" ")
+    end
+    GameTooltip:AddLine("Перетащите предмет из сумки для автозаполнения", 0.58, 0.75, 0.90)
+    GameTooltip:Show()
+  end
+end)
+baitIconFrame:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+
+f._tryBaitInsert = function(link)
+  if not baitModal:IsShown() then return false end
+  if (baitIdInput:HasFocus() or (GetTime() - baitLastIdFocusAt) < 0.25) and type(link) == "string" then
+    local itemID = link:match("item:(%d+)")
+    if itemID then
+      ApplyBaitPreviewItemID(itemID)
+      return true
+    end
+  end
+  return false
+end
+
+-- List Container inside baitModal
+local baitListBox = CreateFrame("Frame", nil, baitModal, "BackdropTemplate")
+baitListBox:SetPoint("TOPLEFT", baitEditCard, "BOTTOMLEFT", 0, -10)
+baitListBox:SetPoint("BOTTOMRIGHT", -14, 14)
+baitListBox:SetBackdrop(FLAT_BACKDROP)
+baitListBox:SetBackdropColor(0.055, 0.078, 0.125, 1)
+baitListBox:SetBackdropBorderColor(0.14, 0.20, 0.30, 1)
+
+local baitScroll = CreateFrame("ScrollFrame", "ForeverSniperBaitScroll", baitListBox, "UIPanelScrollFrameTemplate")
+baitScroll:SetPoint("TOPLEFT", 6, -6)
+baitScroll:SetPoint("BOTTOMRIGHT", -26, 6)
+
+local baitContent = CreateFrame("Frame", nil, baitScroll)
+baitContent:SetSize(496, 200)
+baitScroll:SetScrollChild(baitContent)
+
+local baitEmptyText = baitListBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+baitEmptyText:SetPoint("CENTER")
+baitEmptyText:SetText("|cff64748bСписок наживок пуст. Добавьте предмет и цену выше.|r")
+
+local baitRows = {}
+
+local function ExecuteBaitPost(itemID, priceCopper)
+  if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
+    print("|cfff59e0bGoblin Broker [На живца]:|r сначала откройте окно аукциона.")
+    return
+  end
+  if C_AuctionHouse and C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+    print("|cfff59e0bGoblin Broker [На живца]:|r слот АХ занят — нажмите ещё раз.")
+    return
+  end
+  if not priceCopper or priceCopper <= 0 then
+    print("|cfff59e0bGoblin Broker [На живца]:|r укажите цену больше 0.")
+    return
+  end
+  local itemLoc, bagCount = FindBagItemLocation(itemID)
+  if not itemLoc or bagCount < BAIT_QTY then
+    print("|cfff59e0bGoblin Broker [На живца]:|r предмета нет в сумках (нужна минимум 1 шт).")
+    if RenderBaitList then RenderBaitList() end
+    return
+  end
+  local _, itemName = GetItemVisuals(itemID)
+  local isCommodity = IsBaitCommodity(itemID)
+  local ok, needsConfirm = false, false
+
+  if state.pendingBaitConfirmID == itemID then
+    state.pendingBaitConfirmID = nil
+    if isCommodity and C_AuctionHouse and C_AuctionHouse.ConfirmPostCommodity then
+      ok = pcall(C_AuctionHouse.ConfirmPostCommodity, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper)
+    elseif (not isCommodity) and C_AuctionHouse and C_AuctionHouse.ConfirmPostItem then
+      ok = pcall(C_AuctionHouse.ConfirmPostItem, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper, priceCopper)
+    end
+  else
+    if isCommodity and C_AuctionHouse and C_AuctionHouse.PostCommodity then
+      ok, needsConfirm = pcall(C_AuctionHouse.PostCommodity, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper)
+    elseif (not isCommodity) and C_AuctionHouse and C_AuctionHouse.PostItem then
+      ok, needsConfirm = pcall(C_AuctionHouse.PostItem, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper, priceCopper)
+    end
+  end
+
+  if ok and needsConfirm == true then
+    state.pendingBaitConfirmID = itemID
+    print(string.format("|cfff59e0bGoblin Broker [На живца]:|r цена сильно ниже рынка — нажмите |cfffef08aПодтв. цену!|r ещё раз для %s.", itemName or itemID))
+  elseif ok then
+    print(string.format("|cfff59e0bGoblin Broker [На живца]:|r выставлен 1x %s за %s (мин. срок).", itemName or itemID, FormatCoinsPlain(priceCopper)))
+  else
+    print("|cfff59e0bGoblin Broker [На живца]:|r не удалось выставить лот (проверьте АХ и предмет).")
+  end
+  if RenderBaitList then RenderBaitList() end
+end
+
+RenderBaitList = function()
+  local baits = EnsureBaitsDB()
+  local list = {}
+  for id, price in pairs(baits) do
+    local _, nm = GetItemVisuals(id)
+    table.insert(list, { id = id, price = price, name = nm or tostring(id) })
+  end
+  table.sort(list, function(a, b)
+    if a.name ~= b.name then return a.name < b.name end
+    return a.id < b.id
+  end)
+
+  if #list == 0 then
+    baitEmptyText:Show()
+  else
+    baitEmptyText:Hide()
+  end
+
+  local ahOpen = AuctionHouseFrame and AuctionHouseFrame:IsShown()
+  for i, entry in ipairs(list) do
+    local row = baitRows[i]
+    if not row then
+      row = CreateFrame("Button", nil, baitContent, "BackdropTemplate")
+      row:SetHeight(40)
+      row:SetPoint("TOPLEFT", 0, -((i - 1) * 44))
+      row:SetPoint("TOPRIGHT", 0, -((i - 1) * 44))
+      row:SetBackdrop(FLAT_BACKDROP)
+      row:SetBackdropColor(0.075, 0.105, 0.17, 0.95)
+      row:SetBackdropBorderColor(0.15, 0.22, 0.34, 1)
+
+      row.ico = row:CreateTexture(nil, "ARTWORK")
+      row.ico:SetSize(26, 26)
+      row.ico:SetPoint("LEFT", 8, 0)
+      row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+      row.delBtn = CreateFlatButton(nil, row, 22, 22, "X")
+      row.delBtn:SetPoint("RIGHT", -6, 0)
+      row.delBtn:SetColors({ 0.18, 0.08, 0.10, 1 }, { 0.32, 0.10, 0.14, 1 }, { 0.45, 0.15, 0.20, 0.8 }, { 0.95, 0.65, 0.70 })
+
+      row.postBtn = CreateFlatButton(nil, row, 108, 24, "Выставить 1 шт")
+      row.postBtn:SetPoint("RIGHT", row.delBtn, "LEFT", -6, 0)
+
+      row.priceText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      row.priceText:SetPoint("TOPRIGHT", row.postBtn, "TOPLEFT", -10, 2)
+      row.priceText:SetWidth(112)
+      row.priceText:SetJustifyH("RIGHT")
+
+      row.metaText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      row.metaText:SetPoint("TOPRIGHT", row.priceText, "BOTTOMRIGHT", 0, -2)
+      row.metaText:SetWidth(112)
+      row.metaText:SetJustifyH("RIGHT")
+      row.metaText:SetText("|cff64748b1 шт • мин. срок|r")
+
+      row.nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      row.nameText:SetPoint("TOPLEFT", row.ico, "TOPRIGHT", 8, -1)
+      row.nameText:SetPoint("RIGHT", row.priceText, "LEFT", -8, 0)
+      row.nameText:SetJustifyH("LEFT")
+      row.nameText:SetWordWrap(false)
+
+      row.bagText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      row.bagText:SetPoint("BOTTOMLEFT", row.ico, "BOTTOMRIGHT", 8, 1)
+      row.bagText:SetPoint("RIGHT", row.priceText, "LEFT", -8, 0)
+      row.bagText:SetJustifyH("LEFT")
+
+      baitRows[i] = row
+    end
+
+    local icon, nm, r, g, b = GetItemVisuals(entry.id)
+    local _, bagCount = FindBagItemLocation(entry.id)
+    if not ForeverSniperDB.activeBaitID or not baits[ForeverSniperDB.activeBaitID] then
+      ForeverSniperDB.activeBaitID = entry.id
+    end
+    local isActiveBait = (ForeverSniperDB.activeBaitID == entry.id)
+    row.itemID = entry.id
+    row.priceCopper = entry.price
+    row.isActiveBait = isActiveBait
+    row.ico:SetTexture(icon)
+    row.nameText:SetText((isActiveBait and "|cfff59e0b★ |r" or "") .. nm)
+    row.nameText:SetTextColor(r, g, b)
+    row:SetBackdropBorderColor(isActiveBait and 0.92 or 0.15, isActiveBait and 0.70 or 0.22, isActiveBait and 0.03 or 0.34, isActiveBait and 0.9 or 1)
+    row.bagText:SetText(string.format("|cff94a3b8В сумках:|r %s%d шт|r%s", bagCount > 0 and "|cff10b981" or "|cfff43f5e", bagCount, isActiveBait and "  |cfff59e0b[Хоткей]|r" or ""))
+    row.priceText:SetText(FormatCoins(entry.price))
+
+    local needsConfirm = (state.pendingBaitConfirmID == entry.id)
+    if not ahOpen then
+      row.postBtn:SetLabel("Откройте АХ")
+      row.postBtn:SetColors({ 0.10, 0.13, 0.20, 1 }, { 0.14, 0.18, 0.26, 1 }, { 0.20, 0.26, 0.36, 0.6 }, { 0.50, 0.58, 0.70 })
+    elseif bagCount < 1 then
+      row.postBtn:SetLabel("Нет в сумке")
+      row.postBtn:SetColors({ 0.10, 0.13, 0.20, 1 }, { 0.14, 0.18, 0.26, 1 }, { 0.20, 0.26, 0.36, 0.6 }, { 0.50, 0.58, 0.70 })
+    elseif needsConfirm then
+      row.postBtn:SetLabel("Подтв. цену!")
+      row.postBtn:SetColors({ 0.52, 0.14, 0.14, 1 }, { 0.68, 0.18, 0.18, 1 }, { 0.96, 0.35, 0.35, 0.95 }, { 1, 0.95, 0.95 })
+    else
+      row.postBtn:SetLabel("Выставить 1 шт")
+      row.postBtn:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.62, 0.44, 0.03, 1 }, { 0.92, 0.70, 0.03, 0.95 }, { 1, 0.96, 0.85 })
+    end
+
+    row:SetScript("OnClick", function(self)
+      ForeverSniperDB.activeBaitID = self.itemID
+      ApplyBaitPreviewItemID(self.itemID, self.priceCopper)
+      RenderBaitList()
+    end)
+    row:SetScript("OnEnter", function(self)
+      self:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.75)
+      if GameTooltip then
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetItemByID(self.itemID)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Клик по строке: выбрать для хоткея (★) и ред. цены", 0.65, 0.75, 0.85)
+        GameTooltip:Show()
+      end
+    end)
+    row:SetScript("OnLeave", function(self)
+      if self.isActiveBait then
+        self:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.9)
+      else
+        self:SetBackdropBorderColor(0.15, 0.22, 0.34, 1)
+      end
+      if GameTooltip then GameTooltip:Hide() end
+    end)
+
+    row.postBtn:SetScript("OnClick", function()
+      ForeverSniperDB.activeBaitID = entry.id
+      ExecuteBaitPost(entry.id, entry.price)
+    end)
+    row.delBtn:SetScript("OnClick", function()
+      EnsureBaitsDB()[entry.id] = nil
+      if ForeverSniperDB.activeBaitID == entry.id then
+        ForeverSniperDB.activeBaitID = nil
+      end
+      if state.pendingBaitConfirmID == entry.id then
+        state.pendingBaitConfirmID = nil
+      end
+      RenderBaitList()
+    end)
+    row:Show()
+  end
+
+  for i = #list + 1, #baitRows do
+    baitRows[i]:Hide()
+  end
+  baitContent:SetHeight(math.max(180, #list * 44))
+end
+
+baitSaveBtn:SetScript("OnClick", function()
+  local id = tonumber(baitIdInput:GetText())
+  local g = tonumber(baitGoldInput:GetText()) or 0
+  local s = tonumber(baitSilverInput:GetText()) or 0
+  local c = tonumber(baitCopperInput:GetText()) or 0
+  local copper = (g * 10000) + (s * 100) + c
+  if not id or id <= 0 or copper <= 0 then
+    print("|cfff59e0bGoblin Broker [На живца]:|r укажите корректный ID предмета и цену (з / с / м).")
+    return
+  end
+  EnsureBaitsDB()[id] = copper
+  ForeverSniperDB.activeBaitID = id
+  state.pendingBaitConfirmID = nil
+  ApplyBaitPreviewItemID(id, copper)
+  RenderBaitList()
+end)
+
+baitIdInput:SetScript("OnEnterPressed", function(self)
+  local id = tonumber(self:GetText())
+  if id and id > 0 then
+    ApplyBaitPreviewItemID(id)
+  else
+    self:ClearFocus()
+  end
+end)
+
+function ForeverSniper_OnBaitHotkey()
+  local baits = EnsureBaitsDB()
+  local targetID = ForeverSniperDB.activeBaitID
+  if not targetID or not baits[targetID] then
+    for id in pairs(baits) do
+      targetID = id
+      ForeverSniperDB.activeBaitID = id
+      break
+    end
+  end
+  if not targetID or not baits[targetID] then
+    print("|cfff59e0bGoblin Broker [На живца]:|r список наживок пуст. Добавьте предмет в окне «На живца».")
+    return
+  end
+  ExecuteBaitPost(targetID, baits[targetID])
+end
+
+local function ToggleBaitModal()
+  if baitModal:IsShown() then
+    baitModal:Hide()
+  else
+    EnsureBaitsDB()
+    RefreshBaitHotkeyBtn()
+    RefreshBaitSkip1Btn()
+    RenderBaitList()
+    baitModal:Show()
+  end
+end
+
+f._baitModal = baitModal
+f._renderBaitList = RenderBaitList
+if f._baitBtn then f._baitBtn:SetScript("OnClick", ToggleBaitModal) end
+end
+
+-- ============================================================================
 -- Saved Presets & Inline Popover (Save / Load / Copy / Delete / Export)
 -- ============================================================================
 local PRO_STARTER_PRESETS = {
@@ -3063,14 +4151,14 @@ do
   menu:SetBackdrop(FLAT_BACKDROP)
   menu:SetBackdropColor(0.043, 0.067, 0.125, 0.98)
   menu:SetBackdropBorderColor(0.24, 0.32, 0.46, 1)
-  menu:SetWidth(380)
+  menu:SetWidth(416)
   menu:EnableMouse(true)
   AttachDropShadow(menu, 12, 0.85)
   menu:Hide()
   f.presetMenu = menu
 
   local newInput = CreateFrame("EditBox", nil, menu, "BackdropTemplate")
-  StyleFlatBox(newInput, 200, 24)
+  StyleFlatBox(newInput, 172, 24)
   newInput:SetPoint("TOPLEFT", 8, -8)
 
   local newPH = newInput:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -3078,13 +4166,26 @@ do
   newPH:SetText("|cff64748bНовый шаблон...|r")
   newInput:SetScript("OnEscapePressed", function(self) self:ClearFocus(); menu:Hide() end)
 
-  local btnEmpty = CreateFlatButton(nil, menu, 78, 24, "+ Новый")
+  local btnEmpty = CreateFlatButton(nil, menu, 70, 24, "+ Новый")
   btnEmpty:SetPoint("LEFT", newInput, "RIGHT", 6, 0)
   btnEmpty:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
   btnEmpty:SetFlatEnabled(false)
 
-  local btnCopy = CreateFlatButton(nil, menu, 74, 24, "Копия")
-  btnCopy:SetPoint("LEFT", btnEmpty, "RIGHT", 6, 0)
+  local btnTracked = CreateFlatButton(nil, menu, 74, 24, "Из отм.")
+  btnTracked:SetPoint("LEFT", btnEmpty, "RIGHT", 6, 0)
+  btnTracked:SetColors({ 0.14, 0.12, 0.04, 1 }, { 0.24, 0.19, 0.06, 1 }, { 0.92, 0.70, 0.03, 0.8 }, { 0.99, 0.88, 0.45 })
+  btnTracked:SetFlatEnabled(false)
+  btnTracked:HookScript("OnEnter", function(self)
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Создать из отмеченных", 0.96, 0.70, 0.03)
+    GameTooltip:AddLine("Сохранит в новый шаблон только товары с включённым глазом-моноклем.", 0.85, 0.90, 0.96, true)
+    GameTooltip:Show()
+  end)
+  btnTracked:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+
+  local btnCopy = CreateFlatButton(nil, menu, 68, 24, "Копия")
+  btnCopy:SetPoint("LEFT", btnTracked, "RIGHT", 6, 0)
   btnCopy:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
   btnCopy:SetFlatEnabled(false)
 
@@ -3093,16 +4194,20 @@ do
     if raw == "" then newPH:Show() else newPH:Hide() end
     local nm = raw:gsub("^%s+", ""):gsub("%s+$", "")
     local exists = (nm ~= "" and ForeverSniperDB.presets and ForeverSniperDB.presets[nm] ~= nil)
+    local hasTracked = (state.queue and #state.queue > 0)
     if nm == "" then
       btnEmpty:SetFlatEnabled(false)
+      btnTracked:SetFlatEnabled(false)
       btnCopy:SetFlatEnabled(false)
       newInput:SetBackdropBorderColor(0.18, 0.24, 0.35, 1)
     elseif exists then
       btnEmpty:SetFlatEnabled(false)
+      btnTracked:SetFlatEnabled(false)
       btnCopy:SetFlatEnabled(false)
       newInput:SetBackdropBorderColor(0.95, 0.28, 0.32, 1)
     else
       btnEmpty:SetFlatEnabled(true)
+      btnTracked:SetFlatEnabled(hasTracked)
       btnCopy:SetFlatEnabled(true)
       if newInput:HasFocus() then
         newInput:SetBackdropBorderColor(0.92, 0.70, 0.03, 1)
@@ -3144,8 +4249,8 @@ do
       local r = mRows[i]
       if not r then
         r = CreateFrame("Frame", nil, menu)
-        r:SetSize(364, 24)
-        r.sel = CreateFlatButton(nil, r, 290, 22, "")
+        r:SetSize(400, 24)
+        r.sel = CreateFlatButton(nil, r, 326, 22, "")
         r.sel:SetPoint("LEFT", 0, 0)
         r.sel.label:SetJustifyH("LEFT")
         r.sel.label:ClearAllPoints()
@@ -3250,18 +4355,18 @@ do
     if missingPro > 0 then
       btnPro:Show()
       btnPro:SetPoint("TOPLEFT", 8, y - 9)
-      btnNone:SetWidth(184)
+      btnNone:SetWidth(220)
       btnNone:SetPoint("LEFT", btnPro, "RIGHT", 6, 0)
     else
       btnPro:Hide()
-      btnNone:SetWidth(364)
+      btnNone:SetWidth(400)
       btnNone:SetPoint("TOPLEFT", 8, y - 9)
     end
     RefreshCreatePresetButtons()
     menu:SetHeight(-(y - 39))
   end
 
-  local function CreatePresetFromInput(emptyNew)
+  local function CreatePresetFromInput(mode)
     local nm = (newInput:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if nm == "" then
       print("|cfff59e0bGoblin Broker:|r введите название шаблона.")
@@ -3272,17 +4377,47 @@ do
       print(string.format("|cfff43f5eGoblin Broker:|r шаблон «%s» уже существует — используйте другое имя или кнопку «• Обновить».", nm))
       return
     end
-    if emptyNew then
+    if mode == "empty" then
       ForeverSniperDB.presets[nm] = { watchlist = {}, qtyLimits = {}, tracked = {} }
       ForeverSniperDB.activePreset = nm
       ForeverSniperDB.presetDirty = false
       ForeverSniperDB.watchlist = {}
       ForeverSniperDB.qtyLimits = {}
       ForeverSniperDB.tracked = {}
+      ForeverSniperDB.boughtByItem = {}
       ForeverSniperDB.selectedID = nil
       state.lastSeenByItem = {}
       ClearPendingDeal()
       UpdateStatus()
+    elseif mode == "tracked" then
+      local wl, ql, tr = {}, {}, {}
+      local cnt = 0
+      for id, price in pairs(ForeverSniperDB.watchlist or {}) do
+        if IsItemTracked(id) then
+          wl[id] = price
+          if ForeverSniperDB.qtyLimits and ForeverSniperDB.qtyLimits[id] then
+            ql[id] = ForeverSniperDB.qtyLimits[id]
+          end
+          tr[id] = true
+          cnt = cnt + 1
+        end
+      end
+      if cnt == 0 then
+        print("|cfff59e0bGoblin Broker:|r нет отмеченных (активных) товаров для создания шаблона.")
+        return
+      end
+      ForeverSniperDB.presets[nm] = { watchlist = wl, qtyLimits = ql, tracked = tr }
+      ForeverSniperDB.activePreset = nm
+      ForeverSniperDB.presetDirty = false
+      ForeverSniperDB.watchlist = CopyTableShallow(wl)
+      ForeverSniperDB.qtyLimits = CopyTableShallow(ql)
+      ForeverSniperDB.tracked = CopyTableShallow(tr)
+      ForeverSniperDB.boughtByItem = {}
+      ForeverSniperDB.selectedID = nil
+      state.lastSeenByItem = {}
+      ClearPendingDeal()
+      UpdateStatus()
+      SyncInputsFromSelected()
     else
       ForeverSniperDB.presets[nm] = {
         watchlist = CopyTableShallow(ForeverSniperDB.watchlist),
@@ -3299,9 +4434,10 @@ do
     print(string.format("|cff10b981Goblin Broker:|r шаблон «%s» создан.", nm))
   end
 
-  btnEmpty:SetScript("OnClick", function() CreatePresetFromInput(true) end)
-  btnCopy:SetScript("OnClick", function() CreatePresetFromInput(false) end)
-  newInput:SetScript("OnEnterPressed", function() CreatePresetFromInput(false) end)
+  btnEmpty:SetScript("OnClick", function() CreatePresetFromInput("empty") end)
+  btnTracked:SetScript("OnClick", function() CreatePresetFromInput("tracked") end)
+  btnCopy:SetScript("OnClick", function() CreatePresetFromInput("all") end)
+  newInput:SetScript("OnEnterPressed", function() CreatePresetFromInput("all") end)
 
   btnPro:SetScript("OnClick", function()
     ForeverSniperDB.presets = ForeverSniperDB.presets or {}
@@ -3602,6 +4738,10 @@ f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("UPDATE_BINDINGS")
 f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+f:RegisterEvent("BAG_UPDATE_DELAYED")
+f:RegisterEvent("MAIL_INBOX_UPDATE")
+f:RegisterEvent("OWNED_AUCTIONS_UPDATED")
+f:RegisterEvent("CHAT_MSG_SYSTEM")
 f:RegisterEvent("AUCTION_HOUSE_SHOW")
 f:RegisterEvent("AUCTION_HOUSE_CLOSED")
 f:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED")
@@ -3618,6 +4758,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     EnsureBackgroundSoundCVar()
     RefreshBuyHotkeyCache()
     RefreshSoundBtn()
+    if f._refreshSkip1Btn then f._refreshSkip1Btn() end
     RefreshTrackBtn()
     ApplyMiniMode()
     if ForeverSniperDB.windowPos then
@@ -3634,8 +4775,20 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     RefreshBuyHotkeyCache()
     RefreshBuyButtonText()
     RefreshOverrideBindings()
+    if f._baitModal and f._baitModal:IsShown() and f._baitModal.RefreshHotkey then
+      f._baitModal.RefreshHotkey()
+    end
   elseif event == "GET_ITEM_INFO_RECEIVED" then
     if f:IsShown() then RenderWatchlist() end
+    if f._baitModal and f._baitModal:IsShown() and f._renderBaitList then f._renderBaitList() end
+  elseif event == "BAG_UPDATE_DELAYED" then
+    if f._baitModal and f._baitModal:IsShown() and f._renderBaitList then f._renderBaitList() end
+  elseif event == "MAIL_INBOX_UPDATE" then
+    if f._sales and f._sales.onMailInboxUpdate then f._sales.onMailInboxUpdate() end
+  elseif event == "OWNED_AUCTIONS_UPDATED" then
+    if f._sales and f._sales.onOwnedAuctionsUpdated then f._sales.onOwnedAuctionsUpdated() end
+  elseif event == "CHAT_MSG_SYSTEM" then
+    if f._sales and f._sales.onSystemChat then f._sales.onSystemChat(arg1) end
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
     state.throttled = true
     state.cleanQueryStreak = 0
@@ -3673,10 +4826,13 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     UpdateStatus()
     SyncInputsFromSelected()
     RefreshOverrideBindings()
+    if f._baitModal and f._baitModal:IsShown() and f._renderBaitList then f._renderBaitList() end
   elseif event == "AUCTION_HOUSE_CLOSED" then
     state.ahOpen = false
+    state.pendingBaitConfirmID = nil
     ForeverSniperDB.autoScan = false
     if f.presetMenu then f.presetMenu:Hide() end
+    if f._baitModal and f._baitModal:IsShown() then f._baitModal:Hide() end
     ClearPendingDeal()
     UpdateStatus()
     RefreshOverrideBindings()
@@ -3696,6 +4852,8 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       end
       local wasReady = deal.quoteReady
       deal.quoteReady = true
+      deal.waitBadgeShown = false
+      deal.throttleBadgeShown = false
       dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
       if not wasReady and IsSoundEnabled() and PlaySound then
         pcall(PlaySound, 8959, "Master")
@@ -3772,7 +4930,8 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       RecordTelemetryMarketFloor(itemID, lowestSeen, floorName)
     end
 
-    if minUnitPrice and totalAvail > 0 then
+    local minDealQty = ForeverSniperDB.skipSingleBait and 2 or 1
+    if minUnitPrice and totalAvail >= minDealQty then
       local _, cachedName = GetItemVisuals(itemID)
       local dealPrices, dealQtys, dealTiers = {}, {}, tierCount
       for ti = 1, tierCount do

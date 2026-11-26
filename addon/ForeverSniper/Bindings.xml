@@ -8,4 +8,7 @@
   <Binding name="FOREVERSNIPER_TOGGLE" category="Goblin Broker: Forever">
     if ForeverSniper_OnToggleHotkey then ForeverSniper_OnToggleHotkey() end
   </Binding>
+  <Binding name="FOREVERSNIPER_BAIT" category="Goblin Broker: Forever">
+    if ForeverSniper_OnBaitHotkey then ForeverSniper_OnBaitHotkey() end
+  </Binding>
 </Bindings>
