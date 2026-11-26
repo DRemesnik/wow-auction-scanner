@@ -1,4 +1,4 @@
 """World of Warcraft: Forever Auction House Tracker & Transmute Analytics."""
 
 __all__ = ["__version__"]
-__version__ = "2.1.1.26"
+__version__ = "2.2.0.27"

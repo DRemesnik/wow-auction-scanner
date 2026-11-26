@@ -17,7 +17,89 @@ ForeverSniperDB = ForeverSniperDB or {
   soundAlert = true,
   miniMode = false,
   railExpanded = false,
+  telemetry = { days = {}, items = {}, hours = {} },
 }
+
+local function EnsureTelemetryDB()
+  ForeverSniperDB.telemetry = ForeverSniperDB.telemetry or {}
+  ForeverSniperDB.telemetry.days = ForeverSniperDB.telemetry.days or {}
+  ForeverSniperDB.telemetry.items = ForeverSniperDB.telemetry.items or {}
+  ForeverSniperDB.telemetry.hours = ForeverSniperDB.telemetry.hours or {}
+  return ForeverSniperDB.telemetry
+end
+
+local function TodayKey()
+  return (date and date("%Y-%m-%d")) or "unknown"
+end
+
+local function HourKey()
+  local t = date and date("*t")
+  return (t and t.hour) or 0
+end
+
+local function TouchHourBucket(t, hr)
+  local h = t.hours[hr]
+  if not h then h = { buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.hours[hr] = h end
+  return h
+end
+
+local function RecordTelemetryDip(itemID, unitPrice, name)
+  if not itemID then return end
+  local t = EnsureTelemetryDB()
+  local dk = TodayKey()
+  local d = t.days[dk]
+  if not d then d = { buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.days[dk] = d end
+  d.dips = (d.dips or 0) + 1
+  local it = t.items[itemID]
+  if not it then it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.items[itemID] = it end
+  it.dips = (it.dips or 0) + 1
+  if name and not it.name then it.name = name end
+  if unitPrice and unitPrice > 0 and (not it.minDip or unitPrice < it.minDip) then
+    it.minDip = unitPrice
+  end
+  local hb = TouchHourBucket(t, HourKey())
+  hb.dips = (hb.dips or 0) + 1
+end
+
+local function RecordTelemetryBuy(itemID, qty, totalCost, name, savedCopper)
+  if not itemID then return end
+  local t = EnsureTelemetryDB()
+  local dk = TodayKey()
+  local sv = math.max(0, tonumber(savedCopper) or 0)
+  local d = t.days[dk]
+  if not d then d = { buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.days[dk] = d end
+  d.buys = (d.buys or 0) + 1
+  d.qty = (d.qty or 0) + (qty or 1)
+  d.spent = (d.spent or 0) + (totalCost or 0)
+  d.saved = (d.saved or 0) + sv
+  local it = t.items[itemID]
+  if not it then it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.items[itemID] = it end
+  it.buys = (it.buys or 0) + 1
+  it.qty = (it.qty or 0) + (qty or 1)
+  it.spent = (it.spent or 0) + (totalCost or 0)
+  it.saved = (it.saved or 0) + sv
+  if name and not it.name then it.name = name end
+  local hb = TouchHourBucket(t, HourKey())
+  hb.buys = (hb.buys or 0) + 1
+  hb.qty = (hb.qty or 0) + (qty or 1)
+  hb.spent = (hb.spent or 0) + (totalCost or 0)
+  hb.saved = (hb.saved or 0) + sv
+end
+
+local function RecordTelemetryMiss(itemID, name)
+  if not itemID then return end
+  local t = EnsureTelemetryDB()
+  local dk = TodayKey()
+  local d = t.days[dk]
+  if not d then d = { buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.days[dk] = d end
+  d.missed = (d.missed or 0) + 1
+  local it = t.items[itemID]
+  if not it then it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.items[itemID] = it end
+  it.missed = (it.missed or 0) + 1
+  if name and not it.name then it.name = name end
+  local hb = TouchHourBucket(t, HourKey())
+  hb.missed = (hb.missed or 0) + 1
+end
 
 local function IsSoundEnabled()
   return ForeverSniperDB.soundAlert ~= false
@@ -704,9 +786,14 @@ end)
 local trackBtn = CreateFlatButton(nil, f, 146, 20, DOT_GRAY .. " Выбрано: 0")
 trackBtn:SetPoint("TOPRIGHT", cfgCard, "BOTTOMRIGHT", 0, -6)
 
+local wlSaveBtn = CreateFlatButton(nil, f, 54, 20, "Сохр.")
+wlSaveBtn:SetPoint("RIGHT", trackBtn, "LEFT", -6, 0)
+wlSaveBtn:SetColors({ 0.02, 0.42, 0.30, 1 }, { 0.04, 0.56, 0.40, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
+wlSaveBtn:Hide()
+
 local wlHeader = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 wlHeader:SetPoint("LEFT", cfgCard, "BOTTOMLEFT", 2, -16)
-wlHeader:SetPoint("RIGHT", trackBtn, "LEFT", -8, 0)
+wlHeader:SetPoint("RIGHT", wlSaveBtn, "LEFT", -6, 0)
 wlHeader:SetJustifyH("LEFT")
 wlHeader:SetWordWrap(false)
 wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
@@ -786,6 +873,31 @@ wlScroll:SetScrollChild(wlContent)
 
 local wlRows = {}
 
+-- Zero-State Onboarding Panel inside wlBox (shown when watchlist is empty)
+do
+  local ob = CreateFrame("Frame", nil, wlBox)
+  ob:SetAllPoints()
+  ob:Hide()
+  local obTitle = ob:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  obTitle:SetPoint("TOP", 0, -30)
+  obTitle:SetText("|cfff59e0bСписок отслеживания пуст|r")
+  local obSub = ob:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  obSub:SetPoint("TOP", obTitle, "BOTTOM", 0, -6)
+  obSub:SetText("|cff94a3b8Загрузите готовые наборы под рынок Forever или вставьте Импорт|r")
+  local obBtn = CreateFlatButton(nil, ob, 250, 28, "Загрузить 5 PRO-наборов под Forever")
+  obBtn:SetPoint("TOP", obSub, "BOTTOM", 0, -14)
+  obBtn:SetColors({ 0.02, 0.42, 0.30, 1 }, { 0.04, 0.56, 0.40, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
+  ob.btn = obBtn
+  wlBox.emptyPanel = ob
+end
+
+f.miniContextText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+f.miniContextText:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 12, -1)
+f.miniContextText:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -61)
+f.miniContextText:SetJustifyH("LEFT")
+f.miniContextText:SetWordWrap(false)
+f.miniContextText:Hide()
+
 -- ============================================================================
 -- Section 3: Live Market Monitor Card (Clean 2-Column Readout)
 -- ============================================================================
@@ -864,7 +976,13 @@ buyBtn:SetFlatEnabled(false)
 -- Detailed Session Purchase Log Window
 -- ============================================================================
 local logFrame = CreateFrame("Frame", "ForeverSniperLogFrame", UIParent, "BackdropTemplate")
-logFrame:SetSize(572, 585)
+local RenderLogFrame
+local logTab = "session"
+local logCloseBtn, logClearBtn, logExportBtn
+local tabSessionBtn, tabItemsBtn, tabDaysBtn, tabHoursBtn
+
+do
+logFrame:SetSize(572, 596)
 logFrame:SetPoint("CENTER")
 logFrame:SetFrameStrata("DIALOG")
 logFrame:SetToplevel(true)
@@ -887,27 +1005,36 @@ logAccent:SetColorTexture(1, 1, 1, 1)
 logAccent:SetGradient("HORIZONTAL", CreateColor(0.92, 0.70, 0.03, 1), CreateColor(0.06, 0.73, 0.51, 1))
 
 local logTitle = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-logTitle:SetPoint("TOPLEFT", 16, -14)
-logTitle:SetText("|cfff59e0bЛог покупок за сессию|r")
+logTitle:SetPoint("TOPLEFT", 16, -12)
+logTitle:SetText("|cfff59e0bАналитика и лог покупок|r")
 
-local logCloseBtn = CreateFlatButton(nil, logFrame, 24, 24, "X")
+logCloseBtn = CreateFlatButton(nil, logFrame, 24, 24, "X")
 logCloseBtn:SetPoint("TOPRIGHT", -14, -12)
 logCloseBtn:SetColors({ 0.10, 0.13, 0.21, 1 }, { 0.55, 0.14, 0.18, 1 }, { 0.22, 0.28, 0.40, 1 }, { 0.85, 0.89, 0.95 })
 logCloseBtn:SetScript("OnClick", function() logFrame:Hide() end)
 
-local logClearBtn = CreateFlatButton(nil, logFrame, 134, 24, "Очистить историю")
+logClearBtn = CreateFlatButton(nil, logFrame, 104, 24, "Очистить")
 logClearBtn:SetPoint("RIGHT", logCloseBtn, "LEFT", -8, 0)
 logClearBtn:SetColors({ 0.28, 0.10, 0.13, 1 }, { 0.45, 0.14, 0.18, 1 }, { 0.65, 0.22, 0.28, 0.85 }, { 1, 0.86, 0.88 })
 
-local logSummaryText = logFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-logSummaryText:SetPoint("TOPLEFT", 16, -30)
-logSummaryText:SetText("|cff94a3b8Статистика покупок текущей игровой сессии|r")
+logExportBtn = CreateFlatButton(nil, logFrame, 118, 24, "Экспорт отчёта")
+logExportBtn:SetPoint("RIGHT", logClearBtn, "LEFT", -6, 0)
+logExportBtn:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
 
--- 3 KPI Summary Cards (Qty, Total Spent, Weighted Avg / Unit)
+tabSessionBtn = CreateFlatButton(nil, logFrame, 130, 22, "Сессия")
+tabSessionBtn:SetPoint("TOPLEFT", 14, -44)
+tabItemsBtn = CreateFlatButton(nil, logFrame, 130, 22, "По товарам")
+tabItemsBtn:SetPoint("LEFT", tabSessionBtn, "RIGHT", 8, 0)
+tabDaysBtn = CreateFlatButton(nil, logFrame, 130, 22, "По дням")
+tabDaysBtn:SetPoint("LEFT", tabItemsBtn, "RIGHT", 8, 0)
+tabHoursBtn = CreateFlatButton(nil, logFrame, 130, 22, "По часам (24ч)")
+tabHoursBtn:SetPoint("LEFT", tabDaysBtn, "RIGHT", 8, 0)
+
+-- 3 KPI Summary Cards (Qty, Total Spent, Weighted Avg / Win-Rate)
 local function CreateKpiCard(xOffset, w, labelTxt, accentR, accentG, accentB)
   local c = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
   c:SetSize(w, 46)
-  c:SetPoint("TOPLEFT", xOffset, -48)
+  c:SetPoint("TOPLEFT", xOffset, -72)
   c:SetBackdrop(FLAT_BACKDROP)
   c:SetBackdropColor(0.067, 0.094, 0.153, 1)
   c:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
@@ -920,11 +1047,17 @@ local function CreateKpiCard(xOffset, w, labelTxt, accentR, accentG, accentB)
 
   local lbl = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   lbl:SetPoint("TOPLEFT", 10, -8)
+  lbl:SetWidth(w - 20)
+  lbl:SetJustifyH("LEFT")
+  lbl:SetWordWrap(false)
   lbl:SetText("|cff94a3b8" .. labelTxt .. "|r")
+  c.lbl = lbl
 
   local val = c:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   val:SetPoint("BOTTOMLEFT", 10, 7)
+  val:SetPoint("BOTTOMRIGHT", -10, 7)
   val:SetJustifyH("LEFT")
+  val:SetWordWrap(false)
   val:SetText("—")
   c.val = val
   return c
@@ -934,15 +1067,15 @@ local kpiQtyCard   = CreateKpiCard(14,  176, "КУПЛЕНО (СДЕЛОК)", 0.
 local kpiSpentCard = CreateKpiCard(198, 176, "ВСЕГО ПОТРАЧЕНО",  0.92, 0.70, 0.03)
 local kpiAvgCard   = CreateKpiCard(382, 176, "СРЕДНЯЯ ЗА ШТУКУ", 0.06, 0.73, 0.51)
 
--- Grouped Per-Item Summary Section
+-- Grouped Per-Item Summary Section (Session tab)
 local sumSectionHdr = logFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-sumSectionHdr:SetPoint("TOPLEFT", 16, -104)
+sumSectionHdr:SetPoint("TOPLEFT", 16, -126)
 sumSectionHdr:SetText("|cfff59e0bСВОДКА ПО ПРЕДМЕТАМ|r")
 
 local sumBox = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
-sumBox:SetPoint("TOPLEFT", 14, -120)
-sumBox:SetPoint("TOPRIGHT", -14, -120)
-sumBox:SetHeight(104)
+sumBox:SetPoint("TOPLEFT", 14, -142)
+sumBox:SetPoint("TOPRIGHT", -14, -142)
+sumBox:SetHeight(92)
 sumBox:SetBackdrop(FLAT_BACKDROP)
 sumBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
 sumBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
@@ -969,14 +1102,18 @@ sumContent:SetSize(522, 96)
 sumScroll:SetScrollChild(sumContent)
 local sumRows = {}
 
--- Chronological Deal Log Header
+local sumEmpty = sumBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+sumEmpty:SetPoint("CENTER")
+sumEmpty:SetText("|cff64748bНет покупок за текущую сессию|r")
+
+-- Chronological Deal Log Header (Session tab)
 local detSectionHdr = logFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-detSectionHdr:SetPoint("TOPLEFT", 16, -234)
+detSectionHdr:SetPoint("TOPLEFT", 16, -244)
 detSectionHdr:SetText("|cff94a3b8ДЕТАЛЬНЫЙ ЛОГ СДЕЛОК|r")
 
 local logColHdr = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
-logColHdr:SetPoint("TOPLEFT", 14, -250)
-logColHdr:SetPoint("TOPRIGHT", -14, -250)
+logColHdr:SetPoint("TOPLEFT", 14, -260)
+logColHdr:SetPoint("TOPRIGHT", -14, -260)
 logColHdr:SetHeight(22)
 logColHdr:SetBackdrop(FLAT_BACKDROP)
 logColHdr:SetBackdropColor(0.067, 0.094, 0.153, 1)
@@ -1022,7 +1159,235 @@ logContent:SetSize(522, 290)
 logScroll:SetScrollChild(logContent)
 local logRows = {}
 
-local function RenderLogFrame()
+local logEmpty = logBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+logEmpty:SetPoint("CENTER")
+logEmpty:SetText("|cff64748bСделки появятся здесь автоматически после выкупа лотов|r")
+
+-- Persistent All-Time / Daily Analytics Table (По товарам / По дням / По часам tabs)
+local anaColHdr = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
+anaColHdr:SetPoint("TOPLEFT", 14, -126)
+anaColHdr:SetPoint("TOPRIGHT", -14, -126)
+anaColHdr:SetHeight(22)
+anaColHdr:SetBackdrop(FLAT_BACKDROP)
+anaColHdr:SetBackdropColor(0.067, 0.094, 0.153, 1)
+anaColHdr:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
+anaColHdr:Hide()
+
+local ac1 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ac1:SetPoint("LEFT", 12, 0); ac1:SetWidth(146); ac1:SetJustifyH("LEFT")
+local ac2 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ac2:SetPoint("LEFT", ac1, "RIGHT", 6, 0); ac2:SetWidth(76); ac2:SetJustifyH("RIGHT")
+local ac3 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ac3:SetPoint("LEFT", ac2, "RIGHT", 6, 0); ac3:SetWidth(86); ac3:SetJustifyH("RIGHT")
+local ac4 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ac4:SetPoint("LEFT", ac3, "RIGHT", 6, 0); ac4:SetWidth(76); ac4:SetJustifyH("RIGHT")
+local ac5 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ac5:SetPoint("RIGHT", -24, 0); ac5:SetWidth(96); ac5:SetJustifyH("RIGHT")
+
+local anaBox = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
+anaBox:SetPoint("TOPLEFT", anaColHdr, "BOTTOMLEFT", 0, -2)
+anaBox:SetPoint("BOTTOMRIGHT", -14, 14)
+anaBox:SetBackdrop(FLAT_BACKDROP)
+anaBox:SetBackdropColor(0.028, 0.042, 0.082, 1)
+anaBox:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
+anaBox:Hide()
+
+local anaEmpty = anaBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+anaEmpty:SetPoint("CENTER")
+anaEmpty:SetText("|cff64748bСтатистика пока не накоплена|r")
+anaEmpty:Hide()
+
+local anaScroll = CreateFrame("ScrollFrame", "ForeverSniperAnaScroll", anaBox, "UIPanelScrollFrameTemplate")
+anaScroll:SetPoint("TOPLEFT", 4, -4)
+anaScroll:SetPoint("BOTTOMRIGHT", -14, 4)
+
+local anaScrollBar = _G["ForeverSniperAnaScrollScrollBar"]
+if anaScrollBar then
+  local up = _G["ForeverSniperAnaScrollScrollBarScrollUpButton"]
+  local dn = _G["ForeverSniperAnaScrollScrollBarScrollDownButton"]
+  if up then up:Hide(); up:SetSize(1, 1) end
+  if dn then dn:Hide(); dn:SetSize(1, 1) end
+  local thumb = anaScrollBar:GetThumbTexture()
+  if thumb then thumb:SetColorTexture(0.24, 0.32, 0.46, 0.85); thumb:SetWidth(4) end
+end
+
+local anaContent = CreateFrame("Frame", nil, anaScroll)
+anaContent:SetSize(522, 380)
+anaScroll:SetScrollChild(anaContent)
+local anaRows = {}
+
+local function FormatWinRate(buys, missed)
+  local tot = (buys or 0) + (missed or 0)
+  if tot == 0 then return "|cff64748b—|r" end
+  local pct = math.floor((buys / tot) * 100 + 0.5)
+  local col = pct >= 75 and "|cff10b981" or (pct >= 50 and "|cfff59e0b" or "|cfff43f5e")
+  return string.format("%s%d%%|r", col, pct)
+end
+
+local function RefreshLogTabButtons()
+  local function StyleTab(btn, active)
+    if active then
+      btn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.85 }, { 0.85, 1, 0.94 })
+    else
+      btn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
+    end
+  end
+  StyleTab(tabSessionBtn, logTab == "session")
+  StyleTab(tabItemsBtn, logTab == "items")
+  StyleTab(tabDaysBtn, logTab == "days")
+  StyleTab(tabHoursBtn, logTab == "hours")
+  logClearBtn:SetLabel(logTab == "session" and "Очистить" or "Сбросить базу")
+end
+
+local function GetAnaRow(i)
+  local row = anaRows[i]
+  if not row then
+    row = CreateFrame("Frame", nil, anaContent, "BackdropTemplate")
+    row:SetSize(518, 24); row:SetBackdrop(FLAT_BACKDROP); row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.35)
+    row.barFill = row:CreateTexture(nil, "BACKGROUND", nil, 2)
+    row.barFill:SetPoint("TOPLEFT", 1, -1)
+    row.barFill:SetPoint("BOTTOMLEFT", 1, 1)
+    row.barFill:SetColorTexture(0.06, 0.73, 0.51, 0.22)
+    row.barFill:Hide()
+    row.ico = row:CreateTexture(nil, "ARTWORK"); row.ico:SetSize(16, 16); row.ico:SetPoint("LEFT", 6, 0); row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    row.c1 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c1:SetJustifyH("LEFT"); row.c1:SetWordWrap(false)
+    row.c2 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c2:SetPoint("LEFT", row.c1, "RIGHT", 6, 0); row.c2:SetWidth(76); row.c2:SetJustifyH("RIGHT"); row.c2:SetWordWrap(false)
+    row.c3 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c3:SetPoint("LEFT", row.c2, "RIGHT", 6, 0); row.c3:SetWidth(86); row.c3:SetJustifyH("RIGHT"); row.c3:SetWordWrap(false)
+    row.c4 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c4:SetPoint("LEFT", row.c3, "RIGHT", 6, 0); row.c4:SetWidth(76); row.c4:SetJustifyH("RIGHT"); row.c4:SetWordWrap(false)
+    row.c5 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); row.c5:SetPoint("RIGHT", -6, 0); row.c5:SetWidth(96); row.c5:SetJustifyH("RIGHT"); row.c5:SetWordWrap(false)
+    anaRows[i] = row
+  end
+  return row
+end
+
+RenderLogFrame = function()
+  RefreshLogTabButtons()
+  local isSession = (logTab == "session")
+  if isSession then
+    sumSectionHdr:Show(); sumBox:Show(); detSectionHdr:Show(); logColHdr:Show(); logBox:Show()
+    anaColHdr:Hide(); anaBox:Hide()
+  else
+    sumSectionHdr:Hide(); sumBox:Hide(); detSectionHdr:Hide(); logColHdr:Hide(); logBox:Hide()
+    anaColHdr:Show(); anaBox:Show()
+  end
+
+  if not isSession then
+    local t = EnsureTelemetryDB()
+    local totBuys, totQty, totSpent, totSaved, totMissed, totDips = 0, 0, 0, 0, 0, 0
+    for _, d in pairs(t.days or {}) do
+      totBuys = totBuys + (d.buys or 0)
+      totQty = totQty + (d.qty or 0)
+      totSpent = totSpent + (d.spent or 0)
+      totSaved = totSaved + (d.saved or 0)
+      totMissed = totMissed + (d.missed or 0)
+      totDips = totDips + (d.dips or 0)
+    end
+    kpiQtyCard.lbl:SetText("|cff94a3b8КУПЛЕНО / СРЫВОВ|r")
+    kpiQtyCard.val:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d / %d)|r", totQty, totBuys, totMissed))
+    kpiSpentCard.lbl:SetText(totSaved > 0 and "|cff10b981ЭКОНОМИЯ ОТ ЛИМИТА|r" or "|cff94a3b8ПОТРАЧЕНО ВСЕГО|r")
+    kpiSpentCard.val:SetText(totSaved > 0 and FormatCoins(totSaved) or (totSpent > 0 and FormatCoins(totSpent) or "|cff64748b0|r" .. ICON_COPPER))
+    kpiAvgCard.lbl:SetText("|cff94a3b8WIN-RATE / ПРОСАДОК|r")
+    kpiAvgCard.val:SetText(string.format("%s |cff64748b(%d)|r", FormatWinRate(totBuys, totMissed), totDips))
+
+    for _, r in ipairs(anaRows) do r:Hide() end
+    local y = 0
+    if logTab == "items" then
+      ac1:SetText("|cff94a3b8Предмет|r"); ac2:SetText("|cff94a3b8Куплено|r"); ac3:SetText("|cff94a3b8Срывы / WR|r")
+      ac4:SetText("|cff94a3b8Просадки|r"); ac5:SetText("|cff94a3b8Ср. цена|r")
+      local keys = {}
+      for id in pairs(t.items or {}) do table.insert(keys, id) end
+      table.sort(keys, function(a, b)
+        local ia, ib = t.items[a], t.items[b]
+        if (ia.spent or 0) ~= (ib.spent or 0) then return (ia.spent or 0) > (ib.spent or 0) end
+        return (ia.dips or 0) > (ib.dips or 0)
+      end)
+      for i, id in ipairs(keys) do
+        local it = t.items[id]
+        local row = GetAnaRow(i)
+        local icon, nm, r, g, b = GetItemVisuals(id)
+        local avgU = ((it.qty or 0) > 0) and math.floor((it.spent or 0) / it.qty) or 0
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -y)
+        row:SetBackdropColor(i % 2 == 1 and 0.055 or 0.040, i % 2 == 1 and 0.078 or 0.058, i % 2 == 1 and 0.135 or 0.105, 1)
+        row.barFill:Hide()
+        row.ico:Show(); row.ico:SetTexture(icon)
+        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.c1:SetWidth(124)
+        row.c1:SetText(it.name or nm); row.c1:SetTextColor(r, g, b)
+        row.c2:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", it.qty or 0, it.buys or 0))
+        row.c3:SetText(string.format("|cff64748b%d /|r %s", it.missed or 0, FormatWinRate(it.buys, it.missed)))
+        row.c4:SetText(string.format("|cfff59e0b%d|r", it.dips or 0))
+        row.c5:SetText(avgU > 0 and FormatCoins(avgU) or (it.minDip and FormatCoins(it.minDip) or "|cff64748b—|r"))
+        row:Show(); y = y + 26
+      end
+    elseif logTab == "days" then
+      ac1:SetText("|cff94a3b8Дата|r"); ac2:SetText("|cff94a3b8Сделок|r"); ac3:SetText("|cff94a3b8Срывы / WR|r")
+      ac4:SetText("|cff94a3b8Просадок|r"); ac5:SetText("|cff94a3b8Потрачено|r")
+      local days = {}
+      for dk in pairs(t.days or {}) do table.insert(days, dk) end
+      table.sort(days, function(a, b) return a > b end)
+      for i, dk in ipairs(days) do
+        local d = t.days[dk]
+        local row = GetAnaRow(i)
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -y)
+        row:SetBackdropColor(i % 2 == 1 and 0.055 or 0.040, i % 2 == 1 and 0.078 or 0.058, i % 2 == 1 and 0.135 or 0.105, 1)
+        row.barFill:Hide()
+        row.ico:Hide()
+        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", 8, 0); row.c1:SetWidth(146)
+        row.c1:SetText(dk); row.c1:SetTextColor(0.92, 0.96, 1)
+        row.c2:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", d.qty or 0, d.buys or 0))
+        row.c3:SetText(string.format("|cff64748b%d /|r %s", d.missed or 0, FormatWinRate(d.buys, d.missed)))
+        row.c4:SetText(string.format("|cfff59e0b%d|r", d.dips or 0))
+        row.c5:SetText((d.spent or 0) > 0 and FormatCoins(d.spent) or "|cff64748b—|r")
+        row:Show(); y = y + 26
+      end
+    else
+      ac1:SetText("|cff94a3b8Час (24ч)|r"); ac2:SetText("|cff94a3b8Куплено|r"); ac3:SetText("|cff94a3b8Срывы / WR|r")
+      ac4:SetText("|cff94a3b8Просадок|r"); ac5:SetText("|cff94a3b8Потрачено|r")
+      local maxAct = 1
+      for hr = 0, 23 do
+        local h = t.hours and t.hours[hr]
+        local act = h and ((h.dips or 0) + (h.buys or 0) + (h.missed or 0)) or 0
+        if act > maxAct then maxAct = act end
+      end
+      for hr = 0, 23 do
+        local i = hr + 1
+        local h = (t.hours and t.hours[hr]) or { buys = 0, qty = 0, spent = 0, missed = 0, dips = 0 }
+        local act = (h.dips or 0) + (h.buys or 0) + (h.missed or 0)
+        local row = GetAnaRow(i)
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -y)
+        row:SetBackdropColor(i % 2 == 1 and 0.055 or 0.040, i % 2 == 1 and 0.078 or 0.058, i % 2 == 1 and 0.135 or 0.105, 1)
+        row.ico:Hide()
+        if act > 0 then
+          row.barFill:SetWidth(math.max(6, math.floor(514 * (act / maxAct))))
+          if act == maxAct then
+            row.barFill:SetColorTexture(0.92, 0.70, 0.03, 0.24)
+          else
+            row.barFill:SetColorTexture(0.06, 0.73, 0.51, 0.18)
+          end
+          row.barFill:Show()
+        else
+          row.barFill:Hide()
+        end
+        row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", 8, 0); row.c1:SetWidth(146)
+        row.c1:SetText(string.format("%02d:00 - %02d:59", hr, hr))
+        row.c1:SetTextColor(act > 0 and 0.95 or 0.45, act > 0 and 0.98 or 0.52, act > 0 and 1.0 or 0.62)
+        row.c2:SetText((h.buys or 0) > 0 and string.format("|cffffffff%d шт|r |cff64748b(%d)|r", h.qty or 0, h.buys or 0) or "|cff4755690|r")
+        row.c3:SetText(string.format("|cff64748b%d /|r %s", h.missed or 0, FormatWinRate(h.buys, h.missed)))
+        row.c4:SetText((h.dips or 0) > 0 and string.format("|cfff59e0b%d|r", h.dips) or "|cff4755690|r")
+        row.c5:SetText((h.spent or 0) > 0 and FormatCoins(h.spent) or "|cff475569—|r")
+        row:Show(); y = y + 26
+      end
+    end
+    anaContent:SetHeight(math.max(380, y))
+    if y == 0 then anaEmpty:Show() else anaEmpty:Hide() end
+    if anaScrollBar then
+      if y <= 380 then anaScrollBar:Hide() else anaScrollBar:Show() end
+    end
+    return
+  end
+
+  kpiQtyCard.lbl:SetText("|cff94a3b8КУПЛЕНО (СДЕЛОК)|r")
+  kpiSpentCard.lbl:SetText("|cff94a3b8ВСЕГО ПОТРАЧЕНО|r")
+  kpiAvgCard.lbl:SetText("|cff94a3b8СРЕДНЯЯ ЗА ШТУКУ|r")
   local hist = state.sessionBuys.history or {}
   local sb = state.sessionBuys
   local totalQty = sb.totalQty or 0
@@ -1095,6 +1460,7 @@ local function RenderLogFrame()
     sy = sy + 24
   end
   sumContent:SetHeight(math.max(96, sy))
+  if #itemOrder == 0 then sumEmpty:Show() else sumEmpty:Hide() end
   if sumScrollBar then
     if #itemOrder <= 4 then sumScrollBar:Hide() else sumScrollBar:Show() end
   end
@@ -1156,7 +1522,12 @@ local function RenderLogFrame()
   end
 
   logContent:SetHeight(math.max(220, y))
+  if #hist == 0 then logEmpty:Show() else logEmpty:Hide() end
+  if logScrollBar then
+    if #hist <= 10 then logScrollBar:Hide() else logScrollBar:Show() end
+  end
 end
+end -- end LogFrame scope
 
 local function RefreshSessionBar()
   local sb = state.sessionBuys
@@ -1188,6 +1559,8 @@ local function RecordCompletedPurchase(att)
   sb.totalCopper = sb.totalCopper + total
   table.insert(sb.history, att)
   if #sb.history > 100 then table.remove(sb.history, 1) end
+  local saved = (att.maxPrice and att.maxPrice > 0) and math.max(0, (att.maxPrice * qty) - total) or 0
+  RecordTelemetryBuy(att.itemID, qty, total, att.name, saved)
   sb.lastOutcome = string.format(DOT_GREEN .. " |cff10b981Куплено:|r x%d по %s/шт (%s)", qty, FormatCoinsPlain(unitAvg), FormatCoinsPlain(total))
   RefreshSessionBar()
 
@@ -1225,7 +1598,35 @@ local function ClearSessionHistory()
   RefreshSessionBar()
 end
 
-logClearBtn:SetScript("OnClick", ClearSessionHistory)
+tabSessionBtn:SetScript("OnClick", function() logTab = "session"; RenderLogFrame() end)
+tabItemsBtn:SetScript("OnClick", function() logTab = "items"; RenderLogFrame() end)
+tabDaysBtn:SetScript("OnClick", function() logTab = "days"; RenderLogFrame() end)
+tabHoursBtn:SetScript("OnClick", function() logTab = "hours"; RenderLogFrame() end)
+
+logExportBtn:SetScript("OnClick", function()
+  local t = EnsureTelemetryDB()
+  local lines = { "# Goblin Broker: Forever Telemetry (" .. TodayKey() .. ")" }
+  for dk, d in pairs(t.days or {}) do
+    table.insert(lines, string.format("DAY;%s;buys=%d;qty=%d;missed=%d;dips=%d;spent=%d;saved=%d",
+      dk, d.buys or 0, d.qty or 0, d.missed or 0, d.dips or 0, d.spent or 0, d.saved or 0))
+  end
+  for id, it in pairs(t.items or {}) do
+    table.insert(lines, string.format("ITEM;%d;%s;buys=%d;qty=%d;missed=%d;dips=%d;spent=%d;minDip=%d",
+      id, it.name or "", it.buys or 0, it.qty or 0, it.missed or 0, it.dips or 0, it.spent or 0, it.minDip or 0))
+  end
+  OpenExportModal("Экспорт аналитики", table.concat(lines, "\n"))
+  print("|cff06b6d4Goblin Broker:|r экспорт аналитики готов — скопируйте Ctrl+C.")
+end)
+
+logClearBtn:SetScript("OnClick", function()
+  if logTab == "session" then
+    ClearSessionHistory()
+  else
+    ForeverSniperDB.telemetry = { days = {}, items = {}, hours = {} }
+    RenderLogFrame()
+    print("|cff94a3b8Goblin Broker:|r аналитика по дням, часам и товарам сброшена.")
+  end
+end)
 logBtn:SetScript("OnClick", function()
   if logFrame:IsShown() then
     logFrame:Hide()
@@ -1318,9 +1719,10 @@ local function ApplyMiniMode()
     trackBtn:Hide()
     wlBox:Hide()
     dealCard:ClearAllPoints()
-    dealCard:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, 0)
-    dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -60)
-    f:SetHeight(244)
+    dealCard:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, -18)
+    dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -78)
+    f.miniContextText:Show()
+    f:SetHeight(262)
     miniBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.8 }, { 0.85, 1, 0.94 })
     miniBtn.railText:SetText("|cff10b981Полный вид|r")
   else
@@ -1331,6 +1733,7 @@ local function ApplyMiniMode()
     presetsBtn:Show()
     trackBtn:Show()
     wlBox:Show()
+    f.miniContextText:Hide()
     dealCard:ClearAllPoints()
     dealCard:SetPoint("TOPLEFT", wlBox, "BOTTOMLEFT", 0, -10)
     dealCard:SetPoint("TOPRIGHT", wlBox, "BOTTOMRIGHT", 0, -10)
@@ -1413,6 +1816,9 @@ local function RenderWatchlist()
   end
 
   local allItems = state.allItems or {}
+  if wlBox.emptyPanel then
+    if #allItems == 0 then wlBox.emptyPanel:Show() else wlBox.emptyPanel:Hide() end
+  end
   local needScroll = (#allItems > 6)
   local rowW = needScroll and 480 or 490
   wlContent:SetWidth(rowW)
@@ -1645,11 +2051,24 @@ UpdateStatus = function()
   end
 
   if ForeverSniperDB.activePreset and ForeverSniperDB.presets and ForeverSniperDB.presets[ForeverSniperDB.activePreset] then
-    wlHeader:SetText(string.format("|cff10b981ШАБЛОН: %s|r", ForeverSniperDB.activePreset))
+    local dirtyMark = ForeverSniperDB.presetDirty and " |cfff59e0b*|r" or ""
+    wlHeader:SetText(string.format("|cff10b981ШАБЛОН: %s|r%s", ForeverSniperDB.activePreset, dirtyMark))
+    if ForeverSniperDB.presetDirty then wlSaveBtn:Show() else wlSaveBtn:Hide() end
     presetsBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.85 }, { 0.85, 1, 0.94 })
   else
+    ForeverSniperDB.presetDirty = false
+    wlSaveBtn:Hide()
     wlHeader:SetText("|cfff59e0bСПИСОК ОТСЛЕЖИВАНИЯ|r")
     presetsBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.65 }, { 0.96, 0.85, 0.55 })
+  end
+  if f.miniContextText then
+    if sel and ForeverSniperDB.watchlist[sel] then
+      local _, mnm = GetItemVisuals(sel)
+      local qTotal = #(state.queue or {})
+      f.miniContextText:SetText(string.format("|cff94a3b8Цель %d/%d:|r |cfff8fafc%s|r", state.idx or 1, math.max(1, qTotal), mnm))
+    else
+      f.miniContextText:SetText("|cff64748bНет активной цели — откройте полный режим|r")
+    end
   end
   RenderWatchlist()
 
@@ -1666,6 +2085,9 @@ ClearPendingDeal = function(keepLowestMsg, skipCancel)
     end
   end
   state.pendingDeal = nil
+  if not keepLowestMsg then
+    state.lastDisplayedDealItem = nil
+  end
   skipBtn:SetFlatEnabled(false)
   dealStripe:SetColorTexture(0.25, 0.33, 0.45, 0.65)
   dealCard:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
@@ -1677,7 +2099,8 @@ ClearPendingDeal = function(keepLowestMsg, skipCancel)
     dealTitle:SetText(state.ahOpen
       and "|cffcbd5e1Ожидание лота ниже заданного лимита...|r"
       or "|cff94a3b8Откройте окно аукциона для начала сканирования|r")
-    dealMeta:SetText("")
+    local hasBind = GetBindingKey and (GetBindingKey("FOREVERSNIPER_BUY") ~= nil)
+    dealMeta:SetText(hasBind and "" or "|cff64748bСовет: назначьте колесо мыши в ESC -> Назначение клавиш -> Goblin Broker|r")
   end
   RefreshBuyButtonText()
 end
@@ -1694,10 +2117,19 @@ local function SetPendingDeal(deal)
   if deal.maxPrice and deal.maxPrice > 0 and deal.unitPrice and deal.unitPrice <= deal.maxPrice then
     pct = math.floor(((deal.maxPrice - deal.unitPrice) / deal.maxPrice) * 100 + 0.5)
   end
+  local extraReady = 0
+  if state.lastSeenByItem then
+    for id, s in pairs(state.lastSeenByItem) do
+      if id ~= deal.itemID and IsItemTracked(id) and (s.availBelow or 0) > 0 then
+        extraReady = extraReady + 1
+      end
+    end
+  end
+  local extraTxt = extraReady > 0 and string.format("  |cff10b981(+%d в плюсе)|r", extraReady) or ""
   if pct > 0 then
-    dealDelta:SetText(string.format("|cff10b981-%d%% выгоднее лимита|r", pct))
+    dealDelta:SetText(string.format("|cff10b981-%d%% выгоднее лимита|r%s", pct, extraTxt))
   else
-    dealDelta:SetText("|cffcbd5e1В пределах лимита|r")
+    dealDelta:SetText("|cffcbd5e1В пределах лимита|r" .. extraTxt)
   end
 
   local hex = string.format("%02x%02x%02x", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
@@ -1711,6 +2143,7 @@ local function SetPendingDeal(deal)
   RefreshBuyButtonText()
 
   if not wasReady then
+    RecordTelemetryDip(deal.itemID, deal.unitPrice, itemName)
     PlayDealAlert()
   end
 end
@@ -1739,6 +2172,7 @@ local function ExecuteBuyAction(mouseButton)
       name = deal.name or nm,
       qty = 1,
       totalCost = deal.unitPrice,
+      maxPrice = deal.maxPrice,
       at = GetTime(),
       timeStr = date and date("%H:%M:%S") or "",
     }
@@ -1776,6 +2210,7 @@ local function ExecuteBuyAction(mouseButton)
       name = deal.name or nm,
       qty = chosenQty,
       totalCost = totalCost,
+      maxPrice = deal.maxPrice,
       at = GetTime(),
       timeStr = date and date("%H:%M:%S") or "",
     }
@@ -1898,12 +2333,20 @@ local function SendTargetQuery()
   end
   statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
   statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
-  if rotated and not ForeverSniperDB.miniMode then
-    local icon, nm, r, g, b = GetItemVisuals(targetID)
-    itemIcon:SetTexture(icon)
-    iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
-    targetNameText:SetText(nm)
-    targetNameText:SetTextColor(r, g, b)
+  if rotated then
+    local _, nm, r, g, b = GetItemVisuals(targetID)
+    if ForeverSniperDB.miniMode then
+      if f.miniContextText then
+        f.miniContextText:SetText(string.format("|cff94a3b8Цель %d/%d:|r |cfff8fafc%s|r", state.idx or 1, math.max(1, #(state.queue or {})), nm))
+      end
+    else
+      local icon = GetItemVisuals(targetID)
+      itemIcon:SetTexture(icon)
+      iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
+      targetNameText:SetText(nm)
+      targetNameText:SetTextColor(r, g, b)
+      targetSubText:SetText(string.format("|cff64748bID %d  |  Перетащите предмет из сумки на иконку|r", targetID))
+    end
   end
 end
 
@@ -2025,14 +2468,36 @@ local function RunImport(replaceAll)
   print(string.format("|cfff59e0bGoblin Broker:|r импортировано %d позиций.", added))
 end
 
+local function OpenImportModal()
+  impTitle:SetText("|cfff59e0bИмпорт из Goblin Broker: Forever|r")
+  impReplace:Show()
+  impAdd:Show()
+  impCancel:ClearAllPoints()
+  impCancel:SetPoint("LEFT", impAdd, "RIGHT", 8, 0)
+  impCancel:SetLabel("Отмена")
+  editBox:SetText("")
+  imp:Show()
+  editBox:SetFocus()
+end
+
+local function OpenExportModal(titleText, bodyText)
+  impTitle:SetText("|cff06b6d4" .. (titleText or "Экспорт (Ctrl+C)") .. "|r")
+  impReplace:Hide()
+  impAdd:Hide()
+  impCancel:ClearAllPoints()
+  impCancel:SetPoint("BOTTOMRIGHT", -16, 12)
+  impCancel:SetLabel("Закрыть")
+  editBox:SetText(bodyText or "")
+  editBox:HighlightText()
+  imp:Show()
+  editBox:SetFocus()
+end
+
 impCancel:SetScript("OnClick", function() imp:Hide() end)
 impReplace:SetScript("OnClick", function() RunImport(true) end)
 impAdd:SetScript("OnClick", function() RunImport(false) end)
 
-importBtn:SetScript("OnClick", function()
-  editBox:SetText("")
-  imp:Show()
-end)
+importBtn:SetScript("OnClick", OpenImportModal)
 
 -- ============================================================================
 -- Saved Presets Modal (Save / Load / Delete Watchlist Presets)
@@ -2166,13 +2631,23 @@ end
 local function SyncActivePresetSnapshot()
   local ap = ForeverSniperDB.activePreset
   if ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap] then
+    ForeverSniperDB.presetDirty = true
+  end
+end
+
+wlSaveBtn:SetScript("OnClick", function()
+  local ap = ForeverSniperDB.activePreset
+  if ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap] then
     ForeverSniperDB.presets[ap] = {
       watchlist = CopyTableShallow(ForeverSniperDB.watchlist),
       qtyLimits = CopyTableShallow(ForeverSniperDB.qtyLimits),
       tracked = CopyTableShallow(ForeverSniperDB.tracked),
     }
+    ForeverSniperDB.presetDirty = false
+    UpdateStatus()
+    print(string.format("|cff10b981Goblin Broker:|r изменения сохранены в шаблон «%s».", ap))
   end
-end
+end)
 
 local function RenderPresetsList()
   ForeverSniperDB.presets = ForeverSniperDB.presets or {}
@@ -2244,6 +2719,7 @@ local function RenderPresetsList()
 
     row.load:SetScript("OnClick", function()
       ForeverSniperDB.activePreset = nm
+      ForeverSniperDB.presetDirty = false
       ForeverSniperDB.watchlist = CopyTableShallow(p.watchlist)
       ForeverSniperDB.qtyLimits = CopyTableShallow(p.qtyLimits)
       ForeverSniperDB.tracked = CopyTableShallow(p.tracked)
@@ -2270,10 +2746,7 @@ local function RenderPresetsList()
           table.insert(lines, string.format("%d=%d", id, price))
         end
       end
-      editBox:SetText(table.concat(lines, "\n"))
-      editBox:HighlightText()
-      imp:Show()
-      editBox:SetFocus()
+      OpenExportModal("Экспорт шаблона: " .. nm, table.concat(lines, "\n"))
       print(string.format("|cff06b6d4Goblin Broker:|r экспорт шаблона «%s» (%d поз.) — скопируйте Ctrl+C.", nm, #lines))
     end)
 
@@ -2301,10 +2774,12 @@ local function SaveCurrentPreset(emptyNew)
   end
   ForeverSniperDB.presets = ForeverSniperDB.presets or {}
   if emptyNew then
-    ForeverSniperDB.presets[nm] = { watchlist = {}, qtyLimits = {} }
+    ForeverSniperDB.presets[nm] = { watchlist = {}, qtyLimits = {}, tracked = {} }
     ForeverSniperDB.activePreset = nm
+    ForeverSniperDB.presetDirty = false
     ForeverSniperDB.watchlist = {}
     ForeverSniperDB.qtyLimits = {}
+    ForeverSniperDB.tracked = {}
     ForeverSniperDB.selectedID = nil
     state.lastSeenByItem = {}
     ClearPendingDeal()
@@ -2316,6 +2791,7 @@ local function SaveCurrentPreset(emptyNew)
       tracked = CopyTableShallow(ForeverSniperDB.tracked),
     }
     ForeverSniperDB.activePreset = nm
+    ForeverSniperDB.presetDirty = false
     UpdateStatus()
   end
   preNameInput:SetText("")
@@ -2351,6 +2827,35 @@ preStarterBtn:SetScript("OnClick", function()
     print("|cff94a3b8Goblin Broker:|r все 5 PRO-шаблонов уже есть в списке.")
   end
 end)
+
+if wlBox.emptyPanel and wlBox.emptyPanel.btn then
+  wlBox.emptyPanel.btn:SetScript("OnClick", function()
+    ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+    for nm, data in pairs(PRO_STARTER_PRESETS) do
+      if not ForeverSniperDB.presets[nm] then
+        ForeverSniperDB.presets[nm] = {
+          watchlist = CopyTableShallow(data.watchlist),
+          qtyLimits = CopyTableShallow(data.qtyLimits),
+        }
+      end
+    end
+    local defName = "[PRO] Топ Рейд-Травы"
+    local p = ForeverSniperDB.presets[defName]
+    if p then
+      ForeverSniperDB.activePreset = defName
+      ForeverSniperDB.presetDirty = false
+      ForeverSniperDB.watchlist = CopyTableShallow(p.watchlist)
+      ForeverSniperDB.qtyLimits = CopyTableShallow(p.qtyLimits)
+      ForeverSniperDB.tracked = {}
+      ForeverSniperDB.selectedID = nil
+      state.lastSeenByItem = {}
+      ClearPendingDeal()
+      UpdateStatus()
+      SyncInputsFromSelected()
+    end
+    print("|cff10b981Goblin Broker:|r 5 PRO-наборов загружены, активен «[PRO] Топ Рейд-Травы» — жмите Старт скан!")
+  end)
+end
 preNameInput:SetScript("OnEnterPressed", function() SaveCurrentPreset(false) end)
 presetsBtn:SetScript("OnClick", function()
   if pre:IsShown() then
@@ -2616,7 +3121,13 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
     if state.throttled then
       state.throttled = false
-      statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
+      if ForeverSniperDB.autoScan then
+        statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+        statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
+      else
+        statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
+        statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
+      end
     end
     if state.pendingDeal and state.pendingDeal.stage == "ready" then
       dealBadge:SetText(DOT_GREEN .. " |cff10b981ГОТОВО - ЖМИТЕ КУПИТЬ|r")
@@ -2665,7 +3176,9 @@ f:SetScript("OnEvent", function(_, event, arg1)
     state.lastQueryAt = 0
   elseif event == "COMMODITY_PURCHASE_FAILED" then
     if state.lastPurchaseAttempt then
+      local missAtt = state.lastPurchaseAttempt
       state.lastPurchaseAttempt = nil
+      RecordTelemetryMiss(missAtt.itemID, missAtt.name)
       state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот перехвачен - перескан...|r"
       RefreshSessionBar()
     end
@@ -2726,12 +3239,13 @@ f:SetScript("OnEvent", function(_, event, arg1)
       })
       RenderWatchlist()
     else
-      -- Fast zero-redraw exit when market is unchanged above limit
-      if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
+      -- Fast zero-redraw exit only if dealCard already shows this exact item & price
+      if not state.pendingDeal and state.lastDisplayedDealItem == itemID and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
         TryInstantNextQuery()
         return
       end
       ClearPendingDeal(true)
+      state.lastDisplayedDealItem = itemID
       RenderWatchlist()
       if lowestSeen then
         local diff = math.max(0, lowestSeen - maxPrice)
@@ -2803,7 +3317,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
       RenderWatchlist()
       found = true
     else
-      if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
+      if not state.pendingDeal and state.lastDisplayedDealItem == itemID and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
         TryInstantNextQuery()
         return
       end
@@ -2811,6 +3325,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     end
     if not found then
       ClearPendingDeal(true)
+      state.lastDisplayedDealItem = itemID
       if lowestSeen then
         local diff = math.max(0, lowestSeen - maxPrice)
         local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
