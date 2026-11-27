@@ -31,26 +31,26 @@ local function EnsureTelemetryDB()
   return ForeverSniperDB.telemetry
 end
 
-local function RefreshDateCache()
-  local now = GetTime and GetTime() or 0
-  local dc = state and state._dateCache
-  if dc and (now - dc.at) < 60 then return dc end
-  local dStr = (date and date("%Y-%m-%d")) or "unknown"
-  local t = date and date("*t")
-  local hr = (t and t.hour) or 0
-  if state then
-    state._dateCache = { at = now, day = dStr, hour = hr }
-    return state._dateCache
+local TodayKey, HourKey
+do
+  local dateCache = { at = -100, day = "unknown", hour = 0 }
+  local function RefreshDateCache()
+    local now = GetTime and GetTime() or 0
+    if (now - dateCache.at) < 60 and dateCache.at > 0 then return dateCache end
+    dateCache.at = now
+    dateCache.day = (date and date("%Y-%m-%d")) or "unknown"
+    local t = date and date("*t")
+    dateCache.hour = (t and t.hour) or 0
+    return dateCache
   end
-  return { day = dStr, hour = hr }
-end
 
-local function TodayKey()
-  return RefreshDateCache().day
-end
+  TodayKey = function()
+    return RefreshDateCache().day
+  end
 
-local function HourKey()
-  return RefreshDateCache().hour
+  HourKey = function()
+    return RefreshDateCache().hour
+  end
 end
 
 local function TouchHourBucket(t, hr)
@@ -295,43 +295,46 @@ do
   end
 end
 
-local itemKeyCache = {}
-local function GetCachedItemKey(itemID)
-  local k = itemKeyCache[itemID]
-  if not k and C_AuctionHouse and C_AuctionHouse.MakeItemKey then
-    k = C_AuctionHouse.MakeItemKey(itemID)
-    itemKeyCache[itemID] = k
+local GetCachedItemKey, GetItemVisuals
+do
+  local itemKeyCache = {}
+  GetCachedItemKey = function(itemID)
+    local k = itemKeyCache[itemID]
+    if not k and C_AuctionHouse and C_AuctionHouse.MakeItemKey then
+      k = C_AuctionHouse.MakeItemKey(itemID)
+      itemKeyCache[itemID] = k
+    end
+    return k
   end
-  return k
-end
 
-local itemVisualCache = {}
-local function GetItemVisuals(itemID)
-  local cached = itemVisualCache[itemID]
-  if cached then
-    return cached[1], cached[2], cached[3], cached[4], cached[5], cached[6]
+  local itemVisualCache = {}
+  GetItemVisuals = function(itemID)
+    local cached = itemVisualCache[itemID]
+    if cached then
+      return cached[1], cached[2], cached[3], cached[4], cached[5], cached[6]
+    end
+    local icon = 134400
+    if C_Item and C_Item.GetItemIconByID then
+      icon = C_Item.GetItemIconByID(itemID) or icon
+    elseif GetItemInfoInstant then
+      icon = select(5, GetItemInfoInstant(itemID)) or icon
+    end
+    local ik = GetCachedItemKey(itemID)
+    local info = C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo and ik and C_AuctionHouse.GetItemKeyInfo(ik)
+    local realName = (info and info.itemName) or (GetItemInfo and GetItemInfo(itemID))
+    local name = realName or ("Item #" .. tostring(itemID))
+    local quality = (info and info.quality) or (select(3, GetItemInfo(itemID))) or 1
+    local r, g, b = 0.88, 0.91, 0.96
+    if ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
+      local qc = ITEM_QUALITY_COLORS[quality]
+      r, g, b = qc.r, qc.g, qc.b
+    end
+    local coloredName = string.format("|cff%02x%02x%02x%s|r", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255), name)
+    if realName and icon ~= 134400 then
+      itemVisualCache[itemID] = { icon, name, r, g, b, coloredName }
+    end
+    return icon, name, r, g, b, coloredName
   end
-  local icon = 134400
-  if C_Item and C_Item.GetItemIconByID then
-    icon = C_Item.GetItemIconByID(itemID) or icon
-  elseif GetItemInfoInstant then
-    icon = select(5, GetItemInfoInstant(itemID)) or icon
-  end
-  local ik = GetCachedItemKey(itemID)
-  local info = C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo and ik and C_AuctionHouse.GetItemKeyInfo(ik)
-  local realName = (info and info.itemName) or (GetItemInfo and GetItemInfo(itemID))
-  local name = realName or ("Item #" .. tostring(itemID))
-  local quality = (info and info.quality) or (select(3, GetItemInfo(itemID))) or 1
-  local r, g, b = 0.88, 0.91, 0.96
-  if ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality] then
-    local qc = ITEM_QUALITY_COLORS[quality]
-    r, g, b = qc.r, qc.g, qc.b
-  end
-  local coloredName = string.format("|cff%02x%02x%02x%s|r", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255), name)
-  if realName and icon ~= 134400 then
-    itemVisualCache[itemID] = { icon, name, r, g, b, coloredName }
-  end
-  return icon, name, r, g, b, coloredName
 end
 
 local function StyleFlatBox(box, w, h)
