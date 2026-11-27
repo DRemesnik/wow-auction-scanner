@@ -1,4 +1,4 @@
-local ADDON_NAME = ...
+local ADDON_NAME, NS = ...
 
 -- Keybinding labels for WoW's Key Bindings UI
 BINDING_HEADER_FOREVERSNIPER = "Goblin Broker: Forever"
@@ -31,13 +31,26 @@ local function EnsureTelemetryDB()
   return ForeverSniperDB.telemetry
 end
 
+local function RefreshDateCache()
+  local now = GetTime and GetTime() or 0
+  local dc = state and state._dateCache
+  if dc and (now - dc.at) < 60 then return dc end
+  local dStr = (date and date("%Y-%m-%d")) or "unknown"
+  local t = date and date("*t")
+  local hr = (t and t.hour) or 0
+  if state then
+    state._dateCache = { at = now, day = dStr, hour = hr }
+    return state._dateCache
+  end
+  return { day = dStr, hour = hr }
+end
+
 local function TodayKey()
-  return (date and date("%Y-%m-%d")) or "unknown"
+  return RefreshDateCache().day
 end
 
 local function HourKey()
-  local t = date and date("*t")
-  return (t and t.hour) or 0
+  return RefreshDateCache().hour
 end
 
 local function TouchHourBucket(t, hr)
@@ -140,7 +153,6 @@ end
 
 local function PlayDealAlert()
   if not IsSoundEnabled() then return end
-  EnsureBackgroundSoundCVar()
   if PlaySound and SOUNDKIT then
     local coinKit = SOUNDKIT.LOOT_WINDOW_COIN_SOUND or SOUNDKIT.AUCTION_WINDOW_OPEN
     if coinKit then
@@ -231,30 +243,56 @@ local DOT_AMBER   = "|TInterface\\COMMON\\Indicator-Yellow:11:11:0:0|t"
 local DOT_RED     = "|TInterface\\COMMON\\Indicator-Red:11:11:0:0|t"
 local DOT_GRAY    = "|TInterface\\COMMON\\Indicator-Gray:11:11:0:0|t"
 
-local function FormatCoins(copper)
-  if not copper or copper <= 0 then
-    return "0" .. ICON_COPPER
-  end
-  local g = math.floor(copper / 10000)
-  local s = math.floor((copper % 10000) / 100)
-  local c = copper % 100
-  local parts = {}
-  if g > 0 then table.insert(parts, "|cffffffff" .. g .. "|r" .. ICON_GOLD) end
-  if s > 0 or g > 0 then table.insert(parts, "|cffffffff" .. s .. "|r" .. ICON_SILVER) end
-  table.insert(parts, "|cffffffff" .. c .. "|r" .. ICON_COPPER)
-  return table.concat(parts, " ")
-end
+local FormatCoins, FormatCoinsPlain
+do
+  local coinsCache, coinsCnt = {}, 0
+  local plainCache, plainCnt = {}, 0
 
-local function FormatCoinsPlain(copper)
-  if not copper or copper <= 0 then return "0c" end
-  local g = math.floor(copper / 10000)
-  local s = math.floor((copper % 10000) / 100)
-  local c = copper % 100
-  local parts = {}
-  if g > 0 then table.insert(parts, g .. "g") end
-  if s > 0 or g > 0 then table.insert(parts, s .. "s") end
-  table.insert(parts, c .. "c")
-  return table.concat(parts, " ")
+  FormatCoins = function(copper)
+    if not copper or copper <= 0 then
+      return "0" .. ICON_COPPER
+    end
+    local hit = coinsCache[copper]
+    if hit then return hit end
+    local g = math.floor(copper / 10000)
+    local s = math.floor((copper % 10000) / 100)
+    local c = copper % 100
+    local out
+    if g > 0 then
+      out = "|cffffffff" .. g .. "|r" .. ICON_GOLD .. " |cffffffff" .. s .. "|r" .. ICON_SILVER .. " |cffffffff" .. c .. "|r" .. ICON_COPPER
+    elseif s > 0 then
+      out = "|cffffffff" .. s .. "|r" .. ICON_SILVER .. " |cffffffff" .. c .. "|r" .. ICON_COPPER
+    else
+      out = "|cffffffff" .. c .. "|r" .. ICON_COPPER
+    end
+    if coinsCnt < 512 then
+      coinsCache[copper] = out
+      coinsCnt = coinsCnt + 1
+    end
+    return out
+  end
+
+  FormatCoinsPlain = function(copper)
+    if not copper or copper <= 0 then return "0c" end
+    local hit = plainCache[copper]
+    if hit then return hit end
+    local g = math.floor(copper / 10000)
+    local s = math.floor((copper % 10000) / 100)
+    local c = copper % 100
+    local out
+    if g > 0 then
+      out = g .. "g " .. s .. "s " .. c .. "c"
+    elseif s > 0 then
+      out = s .. "s " .. c .. "c"
+    else
+      out = c .. "c"
+    end
+    if plainCnt < 512 then
+      plainCache[copper] = out
+      plainCnt = plainCnt + 1
+    end
+    return out
+  end
 end
 
 local itemKeyCache = {}
@@ -271,7 +309,7 @@ local itemVisualCache = {}
 local function GetItemVisuals(itemID)
   local cached = itemVisualCache[itemID]
   if cached then
-    return cached[1], cached[2], cached[3], cached[4], cached[5]
+    return cached[1], cached[2], cached[3], cached[4], cached[5], cached[6]
   end
   local icon = 134400
   if C_Item and C_Item.GetItemIconByID then
@@ -279,8 +317,8 @@ local function GetItemVisuals(itemID)
   elseif GetItemInfoInstant then
     icon = select(5, GetItemInfoInstant(itemID)) or icon
   end
-  local info = C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo and C_AuctionHouse.MakeItemKey and
-    C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
+  local ik = GetCachedItemKey(itemID)
+  local info = C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo and ik and C_AuctionHouse.GetItemKeyInfo(ik)
   local realName = (info and info.itemName) or (GetItemInfo and GetItemInfo(itemID))
   local name = realName or ("Item #" .. tostring(itemID))
   local quality = (info and info.quality) or (select(3, GetItemInfo(itemID))) or 1
@@ -289,10 +327,11 @@ local function GetItemVisuals(itemID)
     local qc = ITEM_QUALITY_COLORS[quality]
     r, g, b = qc.r, qc.g, qc.b
   end
+  local coloredName = string.format("|cff%02x%02x%02x%s|r", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255), name)
   if realName and icon ~= 134400 then
-    itemVisualCache[itemID] = { icon, name, r, g, b }
+    itemVisualCache[itemID] = { icon, name, r, g, b, coloredName }
   end
-  return icon, name, r, g, b
+  return icon, name, r, g, b, coloredName
 end
 
 local function StyleFlatBox(box, w, h)
@@ -490,7 +529,7 @@ closeBtn:SetScript("OnClick", function() f:Hide() end)
 
 -- Live Status Pill
 local statusPill = CreateFrame("Frame", nil, f, "BackdropTemplate")
-statusPill:SetSize(118, 26)
+statusPill:SetSize(148, 26)
 statusPill:SetPoint("RIGHT", closeBtn, "LEFT", -6, 0)
 statusPill:SetBackdrop(FLAT_BACKDROP)
 statusPill:SetBackdropColor(0.07, 0.10, 0.18, 1)
@@ -499,6 +538,20 @@ statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
 local statusText = statusPill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 statusText:SetPoint("CENTER")
 statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
+statusPill:EnableMouse(true)
+statusPill:SetScript("OnEnter", function(self)
+  if not GameTooltip then return end
+  GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+  GameTooltip:AddLine("Быстродействие системы", 0.96, 0.70, 0.03)
+  local rtt = state.avgRttMs
+  local rCol = (not rtt or rtt <= 120) and {0.06, 0.85, 0.55} or (rtt <= 250 and {0.96, 0.70, 0.03} or {0.95, 0.35, 0.40})
+  GameTooltip:AddDoubleLine("Отклик АХ (RTT):", rtt and (rtt .. " мс") or "—", 0.85, 0.90, 0.96, rCol[1], rCol[2], rCol[3])
+  GameTooltip:AddDoubleLine("Бронь цены (Quote):", state.lastQuoteMs and (state.lastQuoteMs .. " мс") or "—", 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
+  local iv = state.queryInterval or 0.25
+  GameTooltip:AddDoubleLine("Темп скана:", string.format("%.2fс (%.1f/с)", iv, 1 / math.max(0.1, iv)), 0.85, 0.90, 0.96, 1, 1, 1)
+  GameTooltip:Show()
+end)
+statusPill:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 
 local hdrDiv = f:CreateTexture(nil, "ARTWORK")
 hdrDiv:SetHeight(1)
@@ -1224,7 +1277,7 @@ trackBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", f, 500, 46, "Нет активного лота")
 buyBtn:SetPoint("TOPLEFT", execRow, "BOTTOMLEFT", 0, -8)
 buyBtn:SetPoint("TOPRIGHT", execRow, "BOTTOMRIGHT", 0, -8)
-buyBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+buyBtn:RegisterForClicks("LeftButtonDown", "RightButtonUp")
 buyBtn.label:SetFontObject("GameFontNormalLarge")
 buyBtn.label:SetWidth(484)
 buyBtn.label:SetWordWrap(false)
@@ -1281,15 +1334,15 @@ logExportBtn = CreateFlatButton(nil, logFrame, 118, 24, "Экспорт отчё
 logExportBtn:SetPoint("RIGHT", logClearBtn, "LEFT", -6, 0)
 logExportBtn:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
 
-tabSessionBtn = CreateFlatButton(nil, logFrame, 136, 22, "Сессия")
+tabSessionBtn = CreateFlatButton(nil, logFrame, 112, 22, "Сессия")
 tabSessionBtn:SetPoint("TOPLEFT", 14, -44)
-tabItemsBtn = CreateFlatButton(nil, logFrame, 136, 22, "По товарам")
+tabItemsBtn = CreateFlatButton(nil, logFrame, 112, 22, "По товарам")
 tabItemsBtn:SetPoint("LEFT", tabSessionBtn, "RIGHT", 8, 0)
-tabDaysBtn = CreateFlatButton(nil, logFrame, 136, 22, "По дням")
+tabDaysBtn = CreateFlatButton(nil, logFrame, 112, 22, "По дням")
 tabDaysBtn:SetPoint("LEFT", tabItemsBtn, "RIGHT", 8, 0)
-tabHoursBtn = CreateFlatButton(nil, logFrame, 136, 22, "По часам (24ч)")
+tabHoursBtn = CreateFlatButton(nil, logFrame, 112, 22, "По часам (24ч)")
 tabHoursBtn:SetPoint("LEFT", tabDaysBtn, "RIGHT", 8, 0)
-f._tabSalesBtn = CreateFlatButton(nil, logFrame, 136, 22, "Продажи")
+f._tabSalesBtn = CreateFlatButton(nil, logFrame, 112, 22, "Продажи")
 f._tabSalesBtn:SetPoint("LEFT", tabHoursBtn, "RIGHT", 8, 0)
 
 -- 3 KPI Summary Cards (Qty, Total Spent, Weighted Avg / Win-Rate)
@@ -1503,7 +1556,8 @@ local function RefreshLogTabButtons()
   StyleTab(tabDaysBtn, logTab == "days")
   StyleTab(tabHoursBtn, logTab == "hours")
   if f._tabSalesBtn then StyleTab(f._tabSalesBtn, logTab == "sales") end
-  logClearBtn:SetLabel((logTab == "session" or logTab == "sales") and "Очистить" or "Сбросить базу")
+  if NS.tabLiqBtn then StyleTab(NS.tabLiqBtn, logTab == "liquidity") end
+  logClearBtn:SetLabel((logTab == "session" or logTab == "sales" or logTab == "liquidity") and "Очистить" or "Сбросить базу")
 end
 
 local function GetAnaRow(i)
@@ -1514,6 +1568,21 @@ local function GetAnaRow(i)
     row:EnableMouse(true)
     row:SetScript("OnEnter", function(self)
       if not GameTooltip then return end
+      if self.liqItemID then
+        local rec = ForeverSniperDB.market and ForeverSniperDB.market[self.liqItemID]
+        if not rec then return end
+        local _, iname = GetItemVisuals(self.liqItemID)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("|cff06b6d4" .. iname .. " — Ликвидность|r")
+        GameTooltip:AddDoubleLine("Liquidity Score:", string.format("%d / 100", rec.cls or 0), 0.85, 0.90, 0.96, 0.06, 0.85, 0.55)
+        GameTooltip:AddDoubleLine("Лучшая цена (P1):", FormatCoinsPlain(rec.p1 or 0), 0.85, 0.90, 0.96, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Устойчивый пол (P2):", FormatCoinsPlain(rec.p2 or 0), 0.85, 0.90, 0.96, 0.96, 0.85, 0.45)
+        GameTooltip:AddDoubleLine("Бот-пила (CRI):", string.format("%.0f%%", (rec.cri or 0) * 100), 0.85, 0.90, 0.96, 0.95, 0.70, 0.25)
+        GameTooltip:AddDoubleLine("Сделано сканов:", tostring(rec.scans or 0), 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
+        GameTooltip:AddLine("Клик: выбрать предмет в Снайпер", 0.60, 0.72, 0.84)
+        GameTooltip:Show()
+        return
+      end
       if self.salesInfo then
         local si = self.salesInfo
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1564,6 +1633,12 @@ local function GetAnaRow(i)
     end)
     row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     row:SetScript("OnMouseUp", function(self, btn)
+      if btn == "LeftButton" and self.liqItemID then
+        ForeverSniperDB.selectedID = self.liqItemID
+        UpdateStatus()
+        SyncInputsFromSelected()
+        return
+      end
       if btn == "LeftButton" and self.roiItemID then
         selectedAnaItemID = self.roiItemID
         RenderLogFrame()
@@ -1586,6 +1661,7 @@ local function GetAnaRow(i)
   end
   row.roiItemID = nil
   row.salesInfo = nil
+  row.liqItemID = nil
   return row
 end
 
@@ -1604,6 +1680,11 @@ RenderLogFrame = function()
   end
 
   if not isSession then
+    if logTab == "liquidity" and NS.RenderLiquidityTab then
+      for _, r in ipairs(anaRows) do r:Hide() end
+      NS.RenderLiquidityTab(kpiQtyCard, kpiSpentCard, kpiAvgCard, ac1, ac2, ac3, ac4, ac5, ac6, ac7, GetAnaRow, anaContent, anaEmpty, anaScrollBar)
+      return
+    end
     if logTab == "sales" then
       local s = f._sales and f._sales.ensure() or { totalQty = 0, totalDeals = 0, totalGross = 0, totalNet = 0, totalCut = 0, byItem = {} }
       local t = EnsureTelemetryDB()
@@ -2024,6 +2105,12 @@ RenderLogFrame = function()
       end)
       row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     row:SetScript("OnMouseUp", function(self, btn)
+      if btn == "LeftButton" and self.liqItemID then
+        ForeverSniperDB.selectedID = self.liqItemID
+        UpdateStatus()
+        SyncInputsFromSelected()
+        return
+      end
       if btn == "LeftButton" and self.roiItemID then
         selectedAnaItemID = self.roiItemID
         RenderLogFrame()
@@ -2338,6 +2425,11 @@ end)
 logClearBtn:SetScript("OnClick", function()
   if logTab == "session" then
     ClearSessionHistory()
+  elseif logTab == "liquidity" then
+    ForeverSniperDB.market = {}
+    state.marketLive = {}
+    RenderLogFrame()
+    print("|cff06b6d4Goblin Broker:|r статистика ликвидности очищена.")
   elseif logTab == "sales" then
     ForeverSniperDB.sales = { totalQty = 0, totalDeals = 0, totalGross = 0, totalNet = 0, totalCut = 0, byItem = {}, history = {}, seenMail = {} }
     RenderLogFrame()
@@ -2676,6 +2768,12 @@ local function RenderWatchlist()
       end)
       row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     row:SetScript("OnMouseUp", function(self, btn)
+      if btn == "LeftButton" and self.liqItemID then
+        ForeverSniperDB.selectedID = self.liqItemID
+        UpdateStatus()
+        SyncInputsFromSelected()
+        return
+      end
       if btn == "LeftButton" and self.roiItemID then
         selectedAnaItemID = self.roiItemID
         RenderLogFrame()
@@ -2845,7 +2943,12 @@ UpdateStatus = function()
     statusText:SetText(DOT_GREEN .. " |cff10b981Лот найден|r")
     statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.85)
   elseif ForeverSniperDB.autoScan then
+    if state.avgRttMs then
+    local rc = state.avgRttMs <= 120 and "|cff10b981" or (state.avgRttMs <= 250 and "|cfff59e0b" or "|cfff43f5e")
+    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r |cff64748b·|r %s%dмс|r", state.queryCount, rc, state.avgRttMs))
+  else
     statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+  end
     statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   else
     statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
@@ -2923,6 +3026,9 @@ ClearPendingDeal = function(keepLowestMsg, allowServerCancel)
       pcall(C_AuctionHouse.CancelCommoditiesPurchase)
     end
   end
+  if allowServerCancel then
+    state.pauseScanUntil = 0
+  end
   state.pendingDeal = nil
   if not keepLowestMsg then
     state.lastDisplayedDealItem = nil
@@ -2947,10 +3053,10 @@ end
 local function SetPendingDeal(deal)
   local wasReady = state.pendingDeal and state.pendingDeal.stage == "ready"
   state.pendingDeal = deal
-  local _, itemName, r, g, b = GetItemVisuals(deal.itemID)
+  local _, itemName, r, g, b, coloredName = GetItemVisuals(deal.itemID)
   itemName = deal.name or itemName
 
-  local cap = GetQtyCap(deal.itemID)
+  local cap = deal.cap or GetQtyCap(deal.itemID)
 
   local pct = 0
   if deal.maxPrice and deal.maxPrice > 0 and deal.unitPrice and deal.unitPrice <= deal.maxPrice then
@@ -2971,8 +3077,7 @@ local function SetPendingDeal(deal)
     dealDelta:SetText("|cffcbd5e1В пределах лимита|r" .. extraTxt)
   end
 
-  local hex = string.format("%02x%02x%02x", math.floor(r * 255), math.floor(g * 255), math.floor(b * 255))
-  dealTitle:SetText(string.format("|cff%s%s|r", hex, itemName))
+  dealTitle:SetText(coloredName or itemName)
   if cap > 0 and (deal.qty or 1) > cap then
     dealQtyRight:SetText(string.format("|cff10b981x %d|r |cff94a3b8/ %d шт.|r", cap, deal.qty or 1))
   else
@@ -2982,20 +3087,14 @@ local function SetPendingDeal(deal)
   RefreshBuyButtonText()
 
   if not wasReady then
-    RecordTelemetryDip(deal.itemID, deal.unitPrice, itemName)
     PlayDealAlert()
+    RecordTelemetryDip(deal.itemID, deal.unitPrice, itemName)
   end
 end
 
 -- Fast buy flow (shared between mouse click and direct keybinding)
-local function ExecuteBuyAction(mouseButton)
-  local now = GetTime()
-  if (now - (state.lastBuyExecAt or 0)) < 0.025 then return end
-  state.lastBuyExecAt = now
-  local deal = state.pendingDeal
-  if not deal or not state.ahOpen then return end
-
-  local function GetAffordableQty(d, desiredQty)
+do
+  f._getAffordableQty = function(d, desiredQty)
     local qty = math.max(1, desiredQty or 1)
     if not GetMoney then return qty end
     local myMoney = GetMoney() or 0
@@ -3018,15 +3117,23 @@ local function ExecuteBuyAction(mouseButton)
     end
     return best
   end
+end
+
+local function ExecuteBuyAction(mouseButton)
+  local deal = state.pendingDeal
+  if not deal or not state.ahOpen then return end
 
   if mouseButton == "RightButton" then
     ClearPendingDeal(false, true)
     return
   end
 
-  local cap = GetQtyCap(deal.itemID)
-  local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
-  local chosenQty = math.max(1, effectiveMax)
+  local chosenQty = deal.chosenQty
+  if chosenQty == nil then
+    local cap = deal.cap or GetQtyCap(deal.itemID)
+    local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
+    chosenQty = math.max(1, effectiveMax)
+  end
 
   if not deal.isCommodity then
     if GetMoney and (GetMoney() or 0) < (deal.unitPrice or 0) then
@@ -3035,7 +3142,7 @@ local function ExecuteBuyAction(mouseButton)
     end
     -- Execute PlaceBid FIRST for minimum latency, then record UI/receipt
     C_AuctionHouse.PlaceBid(deal.auctionID, deal.unitPrice)
-    state.pauseScanUntil = GetTime() + 0.6
+    state.pauseScanUntil = GetTime() + 0.25
     local _, nm = GetItemVisuals(deal.itemID)
     local att = {
       itemID = deal.itemID,
@@ -3051,8 +3158,12 @@ local function ExecuteBuyAction(mouseButton)
     return
   end
 
+  local now = GetTime()
   if deal.stage == "ready" then
-    chosenQty = GetAffordableQty(deal, chosenQty)
+    if (now - (state.lastBuyExecAt or 0)) < 0.025 then return end
+    if deal.chosenQty == nil then
+      chosenQty = f._getAffordableQty and f._getAffordableQty(deal, chosenQty) or chosenQty
+    end
     if chosenQty < 1 then
       dealBadge:SetText("|cfff43f5eНЕДОСТАТОЧНО ЗОЛОТА!|r")
       return
@@ -3061,33 +3172,32 @@ local function ExecuteBuyAction(mouseButton)
       dealBadge:SetText("|cfff59e0bСЛОТ АХ ЗАНЯТ — НАЖМИТЕ ЕЩЁ РАЗ|r")
       return
     end
+    state.lastBuyExecAt = now
     C_AuctionHouse.StartCommoditiesPurchase(deal.itemID, chosenQty)
-    state.pauseScanUntil = GetTime() + 1.5
+    state.pauseScanUntil = now + 1.5
     deal.maxAvailQty = deal.maxAvailQty or deal.qty
     deal.qty = chosenQty
     deal.stage = "confirm"
     deal.quoteReady = false
-    deal.confirmAt = GetTime()
+    deal.confirmAt = now
     RefreshBuyButtonText()
     return
   end
 
   if deal.stage == "confirm" then
-    -- Wait for server COMMODITY_PRICE_UPDATED quote (~50ms), with 0.60s lag fallback
-    if not deal.quoteReady and (GetTime() - (deal.confirmAt or 0)) < 0.60 then
+    -- Wait for server COMMODITY_PRICE_UPDATED quote (~50ms), with 0.35s lag fallback
+    if not deal.quoteReady and (now - (deal.confirmAt or 0)) < 0.35 then
       if not deal.waitBadgeShown then
         deal.waitBadgeShown = true
         dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
       end
       return
     end
-    if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
-      if not deal.throttleBadgeShown then
-        deal.throttleBadgeShown = true
-        dealBadge:SetText("|cfff59e0bСЛОТ АХ ЗАНЯТ — ЖМЁМ...|r")
-      end
-      return
-    end
+    if (now - (state.lastBuyExecAt or 0)) < 0.025 then return end
+    state.lastBuyExecAt = now
+    -- Send ConfirmCommoditiesPurchase FIRST for minimum latency, then record attempt
+    C_AuctionHouse.ConfirmCommoditiesPurchase(deal.itemID, chosenQty)
+    state.pauseScanUntil = now + 0.35
     local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
     local _, nm = GetItemVisuals(deal.itemID)
     state.lastPurchaseAttempt = {
@@ -3096,11 +3206,9 @@ local function ExecuteBuyAction(mouseButton)
       qty = chosenQty,
       totalCost = totalCost,
       maxPrice = deal.maxPrice,
-      at = GetTime(),
+      at = now,
       timeStr = date and date("%H:%M:%S") or "",
     }
-    C_AuctionHouse.ConfirmCommoditiesPurchase(deal.itemID, chosenQty)
-    state.pauseScanUntil = GetTime() + 0.6
     ClearPendingDeal(false, false)
   end
 end
@@ -3195,12 +3303,18 @@ end)
 
 local function SendTargetQuery()
   local rotated = false
-  if #state.queue > 1 and not state.pendingDeal then
+  local targetID = ForeverSniperDB.selectedID
+  if state.scanMode == "scanner" then
+    local pool = state.allItems or {}
+    if #pool == 0 then return end
+    state.scannerIdx = ((state.scannerIdx or 0) % #pool) + 1
+    targetID = pool[state.scannerIdx]
+  elseif #state.queue > 1 and not state.pendingDeal then
     state.idx = (state.idx % #state.queue) + 1
     ForeverSniperDB.selectedID = state.queue[state.idx]
+    targetID = ForeverSniperDB.selectedID
     rotated = true
   end
-  local targetID = ForeverSniperDB.selectedID
   if not targetID or not state.ahOpen then return end
   if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
     if not state.throttled then
@@ -3223,16 +3337,20 @@ local function SendTargetQuery()
     state.cleanQueryStreak = 0
     state.queryInterval = math.max(0.25, state.queryInterval - 0.05)
   end
-  statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+  if state.avgRttMs then
+    local rc = state.avgRttMs <= 120 and "|cff10b981" or (state.avgRttMs <= 250 and "|cfff59e0b" or "|cfff43f5e")
+    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r |cff64748b·|r %s%dмс|r", state.queryCount, rc, state.avgRttMs))
+  else
+    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+  end
   statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   if rotated then
-    local _, nm, r, g, b = GetItemVisuals(targetID)
+    local icon, nm, r, g, b = GetItemVisuals(targetID)
     if ForeverSniperDB.miniMode then
       if f.miniContextText then
         f.miniContextText:SetText(string.format("|cff94a3b8Цель %d/%d:|r |cfff8fafc%s|r", state.idx or 1, math.max(1, #(state.queue or {})), nm))
       end
-    else
-      local icon = GetItemVisuals(targetID)
+    elseif isCfgOpen then
       itemIcon:SetTexture(icon)
       iconFrame:SetBackdropBorderColor(r, g, b, 0.9)
       targetNameText:SetText(nm)
@@ -3245,7 +3363,7 @@ end
 local function ToggleScan()
   if not ForeverSniperDB.autoScan then
     -- Always apply current setup inputs (ID, price, max qty) before starting scan
-    if not ApplyManualTarget() and not ForeverSniperDB.selectedID then
+    if not ApplyManualTarget() and not ForeverSniperDB.selectedID and not (state.scanMode == "scanner" and #(state.allItems or {}) > 0) then
       print("|cfff59e0bGoblin Broker:|r сначала укажите ID предмета и макс. цену.")
       return
     end
@@ -3812,10 +3930,7 @@ local function ExecuteBaitPost(itemID, priceCopper)
     print("|cfff59e0bGoblin Broker [На живца]:|r сначала откройте окно аукциона.")
     return
   end
-  if C_AuctionHouse and C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
-    print("|cfff59e0bGoblin Broker [На живца]:|r слот АХ занят — нажмите ещё раз.")
-    return
-  end
+  state.pauseScanUntil = GetTime() + 0.6
   if not priceCopper or priceCopper <= 0 then
     print("|cfff59e0bGoblin Broker [На живца]:|r укажите цену больше 0.")
     return
@@ -4540,7 +4655,8 @@ f:SetScript("OnUpdate", function()
   if now < (state.pauseScanUntil or 0) then return end
   -- Stop sending search queries as soon as a deal is found so AH throttle stays 100% free for instant purchase
   if state.pendingDeal then return end
-  if now - state.lastQueryAt < state.queryInterval then return end
+  local effInt = (state.scanMode == "scanner") and math.max(0.55, state.queryInterval or 0.55) or (state.queryInterval or 0.25)
+  if now - state.lastQueryAt < effInt then return end
   SendTargetQuery()
 end)
 
@@ -4729,7 +4845,8 @@ local function TryInstantNextQuery()
   if not state.ahOpen or not ForeverSniperDB.autoScan or state.pendingDeal then return end
   local now = GetTime()
   if now < (state.pauseScanUntil or 0) then return end
-  if now - (state.lastQueryAt or 0) < (state.queryInterval or 0.25) then return end
+  local effInt = (state.scanMode == "scanner") and math.max(0.55, state.queryInterval or 0.55) or (state.queryInterval or 0.25)
+  if now - (state.lastQueryAt or 0) < effInt then return end
   if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
   SendTargetQuery()
 end
@@ -4792,7 +4909,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
     state.throttled = true
     state.cleanQueryStreak = 0
-    state.queryInterval = math.min(1.0, (state.queryInterval or 0.25) + 0.15)
+    state.queryInterval = math.min(0.50, (state.queryInterval or 0.25) + 0.05)
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
       -- Reservation packet was dropped by AH throttle; revert to ready so user can re-send cleanly
       state.pendingDeal.stage = "ready"
@@ -4804,7 +4921,12 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if state.throttled then
       state.throttled = false
       if ForeverSniperDB.autoScan then
-        statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+        if state.avgRttMs then
+    local rc = state.avgRttMs <= 120 and "|cff10b981" or (state.avgRttMs <= 250 and "|cfff59e0b" or "|cfff43f5e")
+    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r |cff64748b·|r %s%dмс|r", state.queryCount, rc, state.avgRttMs))
+  else
+    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+  end
         statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
       else
         statusText:SetText(DOT_GRAY .. " |cff94a3b8Пауза|r")
@@ -4815,7 +4937,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       dealBadge:SetText(DOT_GREEN .. " |cff10b981ГОТОВО - ЖМИТЕ КУПИТЬ|r")
     end
     if GetTime() >= (state.pauseScanUntil or 0) then
-      state.lastQueryAt = 0 -- Fire next query immediately when throttle bucket frees
+      if state.scanMode ~= "scanner" then state.lastQueryAt = 0 end -- Fire next query immediately in Sniper mode when throttle bucket frees
       TryInstantNextQuery()
     end
   elseif event == "AUCTION_HOUSE_SHOW" then
@@ -4846,12 +4968,17 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       if effUnit and deal.maxPrice and effUnit > deal.maxPrice then
         state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЦена выросла выше лимита — отмена|r"
         RefreshSessionBar()
+        state.pauseScanUntil = 0
         ClearPendingDeal(false, false)
         state.lastQueryAt = 0
+        TryInstantNextQuery()
         return
       end
       local wasReady = deal.quoteReady
       deal.quoteReady = true
+      if deal.confirmAt then
+        state.lastQuoteMs = math.max(1, math.floor((GetTime() - deal.confirmAt) * 1000 + 0.5))
+      end
       deal.waitBadgeShown = false
       deal.throttleBadgeShown = false
       dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
@@ -4863,8 +4990,10 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if state.pendingDeal and state.pendingDeal.stage == "confirm" then
       state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот уже раскупили - перескан...|r"
       RefreshSessionBar()
+      state.pauseScanUntil = 0
       ClearPendingDeal()
       state.lastQueryAt = 0
+      TryInstantNextQuery()
     end
   elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then
     local att = state.lastPurchaseAttempt
@@ -4874,6 +5003,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     end
     state.pauseScanUntil = 0
     state.lastQueryAt = 0
+    TryInstantNextQuery()
   elseif event == "COMMODITY_PURCHASE_FAILED" then
     if state.lastPurchaseAttempt then
       local missAtt = state.lastPurchaseAttempt
@@ -4884,8 +5014,21 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     end
     state.pauseScanUntil = 0
     state.lastQueryAt = 0
+    TryInstantNextQuery()
   elseif event == "COMMODITY_SEARCH_RESULTS_UPDATED" and arg1 then
+    if (state.lastQueryAt or 0) > 0 then
+      local rtt = math.floor((GetTime() - state.lastQueryAt) * 1000 + 0.5)
+      if rtt >= 1 and rtt <= 2000 then
+        state.avgRttMs = state.avgRttMs and math.floor(state.avgRttMs * 0.7 + rtt * 0.3 + 0.5) or rtt
+      end
+    end
     local itemID = tonumber(arg1)
+    if state.scanMode == "scanner" and itemID and ForeverSniperDB.watchlist[itemID] then
+      if NS.OnScannerCommodity then NS.OnScannerCommodity(itemID) end
+      if logFrame:IsShown() and logTab == "liquidity" then RenderLogFrame() end
+      TryInstantNextQuery()
+      return
+    end
     if not itemID or not IsItemTracked(itemID) then return end
     local maxPrice = ForeverSniperDB.watchlist[itemID]
     if not maxPrice then return end
@@ -4898,7 +5041,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     tierCount = 0
     for i = 1, num do
       local res = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
-      if res and res.unitPrice and res.unitPrice > 0 then
+      if res and res.unitPrice and res.unitPrice > 0 and not res.containsOwnerItem then
         if not lowestSeen or res.unitPrice < lowestSeen then lowestSeen = res.unitPrice end
         if res.unitPrice <= maxPrice then
           if not minUnitPrice or res.unitPrice < minUnitPrice then
@@ -4925,7 +5068,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     state.lastSeenByItem[itemID].lowestPrice = lowestSeen
     state.lastSeenByItem[itemID].availBelow = totalAvail
     state.lastSeenByItem[itemID].updatedAt = GetTime()
-    if lowestSeen and lowestSeen > 0 then
+    if lowestSeen and lowestSeen > 0 and prevLowest ~= lowestSeen then
       local _, floorName = GetItemVisuals(itemID)
       RecordTelemetryMarketFloor(itemID, lowestSeen, floorName)
     end
@@ -4933,34 +5076,24 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     local minDealQty = ForeverSniperDB.skipSingleBait and 2 or 1
     if minUnitPrice and totalAvail >= minDealQty then
       local _, cachedName = GetItemVisuals(itemID)
-      local dealPrices, dealQtys, dealTiers = {}, {}, tierCount
-      for ti = 1, tierCount do
-        dealPrices[ti] = tierPrices[ti]
-        dealQtys[ti] = tierQtys[ti]
-      end
-      SetPendingDeal({
+      local preCap = GetQtyCap(itemID)
+      local preMax = (preCap > 0) and math.min(totalAvail, preCap) or totalAvail
+      local dealObj = {
         itemID = itemID,
         isCommodity = true,
         unitPrice = minUnitPrice,
         qty = totalAvail,
+        cap = preCap,
         maxPrice = maxPrice,
         name = cachedName,
         stage = "ready",
-        exactCostForQty = function(wantQty)
-          local rem, sum = wantQty, 0
-          for ti = 1, dealTiers do
-            if rem <= 0 then break end
-            local take = math.min(rem, dealQtys[ti])
-            sum = sum + take * dealPrices[ti]
-            rem = rem - take
-          end
-          return sum
-        end,
-      })
-      RenderWatchlist()
+        exactCostForQty = ComputeTierCost,
+      }
+      dealObj.chosenQty = f._getAffordableQty and f._getAffordableQty(dealObj, preMax) or math.max(1, preMax)
+      SetPendingDeal(dealObj)
     else
-      -- Fast zero-redraw exit only if dealCard already shows this exact item & price
-      if not state.pendingDeal and state.lastDisplayedDealItem == itemID and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
+      -- Fast zero-redraw exit when no deal is active and this item's state hasn't changed
+      if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
         TryInstantNextQuery()
         return
       end
@@ -4988,8 +5121,21 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       end
       TryInstantNextQuery()
     end
+    if not state.pendingDeal and NS.OnPassiveSample then NS.OnPassiveSample(itemID, true, nil) end
   elseif event == "ITEM_SEARCH_RESULTS_UPDATED" and arg1 then
+    if (state.lastQueryAt or 0) > 0 then
+      local rtt = math.floor((GetTime() - state.lastQueryAt) * 1000 + 0.5)
+      if rtt >= 1 and rtt <= 2000 then
+        state.avgRttMs = state.avgRttMs and math.floor(state.avgRttMs * 0.7 + rtt * 0.3 + 0.5) or rtt
+      end
+    end
     local itemID = arg1.itemID
+    if state.scanMode == "scanner" and itemID and ForeverSniperDB.watchlist[itemID] then
+      if NS.OnScannerItem then NS.OnScannerItem(arg1, itemID) end
+      if logFrame:IsShown() and logTab == "liquidity" then RenderLogFrame() end
+      TryInstantNextQuery()
+      return
+    end
     if not itemID or not IsItemTracked(itemID) then return end
     local maxPrice = itemID and ForeverSniperDB.watchlist[itemID]
     if not maxPrice then return end
@@ -5002,7 +5148,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     local bestAuction = nil
     for i = 1, num do
       local res = C_AuctionHouse.GetItemSearchResultInfo(arg1, i)
-      if res and res.buyoutAmount and res.buyoutAmount > 0 then
+      if res and res.buyoutAmount and res.buyoutAmount > 0 and not res.containsOwnerItem then
         if not lowestSeen or res.buyoutAmount < lowestSeen then lowestSeen = res.buyoutAmount end
         if res.buyoutAmount <= maxPrice then
           matchCount = matchCount + 1
@@ -5023,7 +5169,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     state.lastSeenByItem[itemID].lowestPrice = lowestSeen
     state.lastSeenByItem[itemID].availBelow = matchCount
     state.lastSeenByItem[itemID].updatedAt = GetTime()
-    if lowestSeen and lowestSeen > 0 then
+    if lowestSeen and lowestSeen > 0 and prevLowest ~= lowestSeen then
       local _, floorName = GetItemVisuals(itemID)
       RecordTelemetryMarketFloor(itemID, lowestSeen, floorName)
     end
@@ -5040,10 +5186,9 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
         name = cachedName,
         stage = "ready",
       })
-      RenderWatchlist()
       found = true
     else
-      if not state.pendingDeal and state.lastDisplayedDealItem == itemID and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
+      if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
         TryInstantNextQuery()
         return
       end
@@ -5073,8 +5218,35 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       end
       TryInstantNextQuery()
     end
+    if not state.pendingDeal and NS.OnPassiveSample then NS.OnPassiveSample(itemID, false, arg1) end
   end
 end)
+
+-- Export shared references for MarketScanner.lua
+NS.f = f
+NS.state = state
+NS.toolRail = toolRail
+NS.miniBtn = miniBtn
+NS.soundBtn = soundBtn
+NS.railButtons = railButtons
+NS.GetCachedItemKey = GetCachedItemKey
+NS.GetItemVisuals = GetItemVisuals
+NS.FormatCoins = FormatCoins
+NS.FormatCoinsPlain = FormatCoinsPlain
+NS.UpdateStatus = UpdateStatus
+NS.ClearPendingDeal = ClearPendingDeal
+NS.IsItemTracked = IsItemTracked
+NS.logFrame = logFrame
+NS.tabSalesBtn = f._tabSalesBtn
+NS.RenderLogFrame = RenderLogFrame
+NS.SetLogTab = function(t) logTab = t; RenderLogFrame() end
+NS.CreateFlatButton = CreateFlatButton
+NS.FLAT_BACKDROP = FLAT_BACKDROP
+NS.dealCard = dealCard
+NS.dealStripe = dealStripe
+NS.dealBadge = dealBadge
+NS.dealTitle = dealTitle
+NS.dealDelta = dealDelta
 
 SLASH_FOREVERSNIPER1 = "/fsniper"
 SLASH_FOREVERSNIPER2 = "/gbroker"
