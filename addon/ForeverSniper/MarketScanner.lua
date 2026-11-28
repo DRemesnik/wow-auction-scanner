@@ -287,16 +287,20 @@ NS.OnScannerCommodity = function(itemID)
   local numTiers = C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 0
   if numTiers == 0 then
     local db = EnsureMarketDB()
+    local nowSys = time and time() or 0
     local rec = db[itemID]
-    if rec then
-      rec.totalDepth = 0
-      rec.tiers = 0
-      rec.wallQty = 0
-      rec.wall10Qty = 0
-      rec.wall15Qty = 0
-      rec.resetCost15 = 0
-      rec.updatedAt = time and time() or 0
+    if not rec then
+      rec = { p1 = 0, p2 = 0, scans = 0, firstSeenAt = nowSys }
+      db[itemID] = rec
     end
+    rec.totalDepth = 0
+    rec.tiers = 0
+    rec.wallQty = 0
+    rec.wall10Qty = 0
+    rec.wall15Qty = 0
+    rec.resetCost15 = 0
+    rec.scans = (rec.scans or 0) + 1
+    rec.updatedAt = nowSys
     return
   end
 
@@ -347,13 +351,17 @@ NS.OnScannerItem = function(itemKey, itemID)
   local num = C_AuctionHouse.GetNumItemSearchResults(itemKey) or 0
   if num == 0 then
     local db = EnsureMarketDB()
+    local nowSys = time and time() or 0
     local rec = db[itemID]
-    if rec then
-      rec.totalDepth = 0
-      rec.tiers = 0
-      rec.wallQty = 0
-      rec.updatedAt = time and time() or 0
+    if not rec then
+      rec = { p1 = 0, p2 = 0, scans = 0, firstSeenAt = nowSys }
+      db[itemID] = rec
     end
+    rec.totalDepth = 0
+    rec.tiers = 0
+    rec.wallQty = 0
+    rec.scans = (rec.scans or 0) + 1
+    rec.updatedAt = nowSys
     return
   end
   local p1, p2 = nil, nil

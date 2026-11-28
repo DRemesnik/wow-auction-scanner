@@ -339,124 +339,127 @@ do
   end
 end
 
-local UI_ROUND_BG     = "Interface\\AddOns\\ForeverSniper\\ui_round_bg.tga"
-local UI_ROUND_STROKE = "Interface\\AddOns\\ForeverSniper\\ui_round_stroke.tga"
-local UI_PILL_BG      = "Interface\\AddOns\\ForeverSniper\\ui_pill_bg.tga"
-local UI_PILL_STROKE  = "Interface\\AddOns\\ForeverSniper\\ui_pill_stroke.tga"
-local FONT_INTER_MED  = "Interface\\AddOns\\ForeverSniper\\fonts\\Inter-Medium.ttf"
-local FONT_INTER_BOLD = "Interface\\AddOns\\ForeverSniper\\fonts\\Inter-Bold.ttf"
+local ApplyModernFonts, ApplyRoundedSurface
+do
+  local UI_ROUND_BG     = "Interface\\AddOns\\ForeverSniper\\ui_round_bg.tga"
+  local UI_ROUND_STROKE = "Interface\\AddOns\\ForeverSniper\\ui_round_stroke.tga"
+  local UI_PILL_BG      = "Interface\\AddOns\\ForeverSniper\\ui_pill_bg.tga"
+  local UI_PILL_STROKE  = "Interface\\AddOns\\ForeverSniper\\ui_pill_stroke.tga"
+  local FONT_INTER_MED  = "Interface\\AddOns\\ForeverSniper\\fonts\\Inter-Medium.ttf"
+  local FONT_INTER_BOLD = "Interface\\AddOns\\ForeverSniper\\fonts\\Inter-Bold.ttf"
 
-local function ApplyModernFontString(fs)
-  if not fs or fs._interApplied or not fs.SetFont or not fs.GetFont then return end
-  local _, sz = fs:GetFont()
-  local size = tonumber(sz) or 11
-  local useBold = (size >= 12.5)
-  local newSize = (size >= 15) and 14.5 or ((size >= 12.5) and 12.5 or 11)
-  local ok = pcall(fs.SetFont, fs, useBold and FONT_INTER_BOLD or FONT_INTER_MED, newSize, "")
-  if ok then
-    fs:SetShadowOffset(0, -1)
-    fs:SetShadowColor(0, 0, 0, 0.50)
-    fs._interApplied = true
+  local function ApplyModernFontString(fs)
+    if not fs or fs._interApplied or not fs.SetFont or not fs.GetFont then return end
+    local _, sz = fs:GetFont()
+    local size = tonumber(sz) or 11
+    local useBold = (size >= 12.5)
+    local newSize = (size >= 15) and 14.5 or ((size >= 12.5) and 12.5 or 11)
+    local ok = pcall(fs.SetFont, fs, useBold and FONT_INTER_BOLD or FONT_INTER_MED, newSize, "")
+    if ok then
+      fs:SetShadowOffset(0, -1)
+      fs:SetShadowColor(0, 0, 0, 0.50)
+      fs._interApplied = true
+    end
   end
-end
 
-local function ApplyModernFonts(root)
-  if not root then return end
-  if root.GetRegions then
-    local regions = { root:GetRegions() }
-    for i = 1, #regions do
-      local reg = regions[i]
-      if reg and reg.GetObjectType and reg:GetObjectType() == "FontString" then
-        ApplyModernFontString(reg)
+  ApplyModernFonts = function(root)
+    if not root then return end
+    if root.GetRegions then
+      local regions = { root:GetRegions() }
+      for i = 1, #regions do
+        local reg = regions[i]
+        if reg and reg.GetObjectType and reg:GetObjectType() == "FontString" then
+          ApplyModernFontString(reg)
+        end
+      end
+    end
+    if root.GetChildren then
+      local kids = { root:GetChildren() }
+      for i = 1, #kids do
+        ApplyModernFonts(kids[i])
       end
     end
   end
-  if root.GetChildren then
-    local kids = { root:GetChildren() }
-    for i = 1, #kids do
-      ApplyModernFonts(kids[i])
+
+  local function NoSnap(tex)
+    if tex.SetSnapToPixelGrid then tex:SetSnapToPixelGrid(false) end
+    if tex.SetTexelSnappingBias then tex:SetTexelSnappingBias(0) end
+    return tex
+  end
+
+  -- True 9-Slice NoSnap Rounded Surface (pixel-perfect corners at ANY UI scale, zero artifacts!)
+  local NINE_DEFS = {
+    { "tl", 0, 1, 0, 1 }, { "tr", 2, 3, 0, 1 }, { "bl", 0, 1, 2, 3 }, { "br", 2, 3, 2, 3 },
+    { "t",  1, 2, 0, 1 }, { "b",  1, 2, 2, 3 }, { "l",  0, 1, 1, 2 }, { "r",  2, 3, 1, 2 },
+    { "m",  1, 2, 1, 2 },
+  }
+
+  local function BuildNineSliceLayer(frame, texPath, texSize, cornerPx, edgeScreen, layer, sub, includeMiddle)
+    local u = cornerPx / texSize
+    local U = { [0] = 0, [1] = u, [2] = 1 - u, [3] = 1 }
+    local parts = {}
+    for _, def in ipairs(NINE_DEFS) do
+      local k = def[1]
+      if k ~= "m" or includeMiddle then
+        local t = NoSnap(frame:CreateTexture(nil, layer, nil, sub))
+        t:SetTexture(texPath)
+        t:SetTexCoord(U[def[2]], U[def[3]], U[def[4]], U[def[5]])
+        parts[k] = t
+      end
+    end
+    for _, ck in ipairs({ "tl", "tr", "bl", "br" }) do
+      parts[ck]:SetSize(edgeScreen, edgeScreen)
+    end
+    parts.tl:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    parts.tr:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    parts.bl:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    parts.br:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    parts.t:SetPoint("TOPLEFT", parts.tl, "TOPRIGHT"); parts.t:SetPoint("BOTTOMRIGHT", parts.tr, "BOTTOMLEFT")
+    parts.b:SetPoint("TOPLEFT", parts.bl, "TOPRIGHT"); parts.b:SetPoint("BOTTOMRIGHT", parts.br, "BOTTOMLEFT")
+    parts.l:SetPoint("TOPLEFT", parts.tl, "BOTTOMLEFT"); parts.l:SetPoint("BOTTOMRIGHT", parts.bl, "TOPRIGHT")
+    parts.r:SetPoint("TOPLEFT", parts.tr, "BOTTOMLEFT"); parts.r:SetPoint("BOTTOMRIGHT", parts.br, "TOPRIGHT")
+    if parts.m then
+      parts.m:SetPoint("TOPLEFT", parts.tl, "BOTTOMRIGHT")
+      parts.m:SetPoint("BOTTOMRIGHT", parts.br, "TOPLEFT")
+    end
+    return parts
+  end
+
+  local function TintNineSlice(parts, r, g, b, a)
+    if not parts then return end
+    local nr, ng, nb, na = r or 0, g or 0, b or 0, (a ~= nil) and a or 1
+    if parts._lr == nr and parts._lg == ng and parts._lb == nb and parts._la == na then return end
+    parts._lr, parts._lg, parts._lb, parts._la = nr, ng, nb, na
+    for k, t in pairs(parts) do
+      if type(t) == "table" and t.SetVertexColor then
+        t:SetVertexColor(nr, ng, nb, na)
+      end
     end
   end
-end
 
-local function NoSnap(tex)
-  if tex.SetSnapToPixelGrid then tex:SetSnapToPixelGrid(false) end
-  if tex.SetTexelSnappingBias then tex:SetTexelSnappingBias(0) end
-  return tex
-end
+  ApplyRoundedSurface = function(frame, kind)
+    if not frame or frame._modernSurface then return frame end
+    local isPill = (kind == "pill")
+    local bgTex = isPill and UI_PILL_BG or UI_ROUND_BG
+    local stTex = isPill and UI_PILL_STROKE or UI_ROUND_STROKE
+    local cornerPx = isPill and 8 or 12
+    local edgeScr  = isPill and 6 or 10
+    if frame.SetBackdrop then frame:SetBackdrop(nil) end
 
--- True 9-Slice NoSnap Rounded Surface (pixel-perfect corners at ANY UI scale, zero artifacts!)
-local NINE_DEFS = {
-  { "tl", 0, 1, 0, 1 }, { "tr", 2, 3, 0, 1 }, { "bl", 0, 1, 2, 3 }, { "br", 2, 3, 2, 3 },
-  { "t",  1, 2, 0, 1 }, { "b",  1, 2, 2, 3 }, { "l",  0, 1, 1, 2 }, { "r",  2, 3, 1, 2 },
-  { "m",  1, 2, 1, 2 },
-}
+    frame._bgSlice = BuildNineSliceLayer(frame, bgTex, 128, cornerPx, edgeScr, "BACKGROUND", -8, true)
+    frame._stSlice = BuildNineSliceLayer(frame, stTex, 128, cornerPx, edgeScr, "BORDER", 6, false)
+    TintNineSlice(frame._bgSlice, 0.078, 0.088, 0.122, 1)
+    TintNineSlice(frame._stSlice, 1, 1, 1, 0.07)
 
-local function BuildNineSliceLayer(frame, texPath, texSize, cornerPx, edgeScreen, layer, sub, includeMiddle)
-  local u = cornerPx / texSize
-  local U = { [0] = 0, [1] = u, [2] = 1 - u, [3] = 1 }
-  local parts = {}
-  for _, def in ipairs(NINE_DEFS) do
-    local k = def[1]
-    if k ~= "m" or includeMiddle then
-      local t = NoSnap(frame:CreateTexture(nil, layer, nil, sub))
-      t:SetTexture(texPath)
-      t:SetTexCoord(U[def[2]], U[def[3]], U[def[4]], U[def[5]])
-      parts[k] = t
+    frame._modernSurface = true
+    function frame:SetBackdropColor(r, g, b, a)
+      TintNineSlice(self._bgSlice, r, g, b, a)
     end
-  end
-  for _, ck in ipairs({ "tl", "tr", "bl", "br" }) do
-    parts[ck]:SetSize(edgeScreen, edgeScreen)
-  end
-  parts.tl:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-  parts.tr:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
-  parts.bl:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
-  parts.br:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-  parts.t:SetPoint("TOPLEFT", parts.tl, "TOPRIGHT"); parts.t:SetPoint("BOTTOMRIGHT", parts.tr, "BOTTOMLEFT")
-  parts.b:SetPoint("TOPLEFT", parts.bl, "TOPRIGHT"); parts.b:SetPoint("BOTTOMRIGHT", parts.br, "BOTTOMLEFT")
-  parts.l:SetPoint("TOPLEFT", parts.tl, "BOTTOMLEFT"); parts.l:SetPoint("BOTTOMRIGHT", parts.bl, "TOPRIGHT")
-  parts.r:SetPoint("TOPLEFT", parts.tr, "BOTTOMLEFT"); parts.r:SetPoint("BOTTOMRIGHT", parts.br, "TOPRIGHT")
-  if parts.m then
-    parts.m:SetPoint("TOPLEFT", parts.tl, "BOTTOMRIGHT")
-    parts.m:SetPoint("BOTTOMRIGHT", parts.br, "TOPLEFT")
-  end
-  return parts
-end
-
-local function TintNineSlice(parts, r, g, b, a)
-  if not parts then return end
-  local nr, ng, nb, na = r or 0, g or 0, b or 0, (a ~= nil) and a or 1
-  if parts._lr == nr and parts._lg == ng and parts._lb == nb and parts._la == na then return end
-  parts._lr, parts._lg, parts._lb, parts._la = nr, ng, nb, na
-  for k, t in pairs(parts) do
-    if type(t) == "table" and t.SetVertexColor then
-      t:SetVertexColor(nr, ng, nb, na)
+    function frame:SetBackdropBorderColor(r, g, b, a)
+      TintNineSlice(self._stSlice, r, g, b, a)
     end
+    return frame
   end
-end
-
-local function ApplyRoundedSurface(frame, kind)
-  if not frame or frame._modernSurface then return frame end
-  local isPill = (kind == "pill")
-  local bgTex = isPill and UI_PILL_BG or UI_ROUND_BG
-  local stTex = isPill and UI_PILL_STROKE or UI_ROUND_STROKE
-  local cornerPx = isPill and 8 or 12
-  local edgeScr  = isPill and 6 or 10
-  if frame.SetBackdrop then frame:SetBackdrop(nil) end
-
-  frame._bgSlice = BuildNineSliceLayer(frame, bgTex, 128, cornerPx, edgeScr, "BACKGROUND", -8, true)
-  frame._stSlice = BuildNineSliceLayer(frame, stTex, 128, cornerPx, edgeScr, "BORDER", 6, false)
-  TintNineSlice(frame._bgSlice, 0.078, 0.088, 0.122, 1)
-  TintNineSlice(frame._stSlice, 1, 1, 1, 0.07)
-
-  frame._modernSurface = true
-  function frame:SetBackdropColor(r, g, b, a)
-    TintNineSlice(self._bgSlice, r, g, b, a)
-  end
-  function frame:SetBackdropBorderColor(r, g, b, a)
-    TintNineSlice(self._stSlice, r, g, b, a)
-  end
-  return frame
 end
 
 local function StyleFlatBox(box, w, h)
@@ -4400,6 +4403,7 @@ local function SendTargetQuery()
 
   -- Send AH network query FIRST for minimum latency, then update UI
   local itemKey = GetCachedItemKey(targetID)
+  if not itemKey then return end
   C_AuctionHouse.SendSearchQuery(itemKey, PRICE_SORTS, false)
 
   state.throttled = false

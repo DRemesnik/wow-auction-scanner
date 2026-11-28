@@ -74,7 +74,8 @@ namespace GoblinBrokerDesktop
         public static GraphicsPath RoundedRect(Rectangle r, int radius)
         {
             var path = new GraphicsPath();
-            int d = radius * 2;
+            if (r.Width <= 0 || r.Height <= 0) return path;
+            int d = Math.Max(2, radius * 2);
             if (d > r.Width) d = r.Width;
             if (d > r.Height) d = r.Height;
             path.AddArc(r.X, r.Y, d, d, 180, 90);
@@ -162,7 +163,7 @@ namespace GoblinBrokerDesktop
                 e.Graphics.DrawPath(pen, path);
             }
 
-            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
             using (var tbr = new SolidBrush(fg))
             {
                 e.Graphics.DrawString(Text, Font, tbr, new RectangleF(0, _pressed ? 1 : 0, Width, Height), sf);
@@ -226,9 +227,9 @@ namespace GoblinBrokerDesktop
                 e.Graphics.FillEllipse(kbr, kx, ky, knobD, knobD);
             }
 
+            using (var sf = new StringFormat { LineAlignment = StringAlignment.Center })
             using (var tbr = new SolidBrush(_checked ? Theme.TextPrimary : Theme.TextSecondary))
             {
-                var sf = new StringFormat { LineAlignment = StringAlignment.Center };
                 e.Graphics.DrawString(LabelText, Font, tbr, new RectangleF(trackW + 10, 0, Width - trackW - 10, Height), sf);
             }
         }
@@ -270,23 +271,52 @@ namespace GoblinBrokerDesktop
             return "";
         }
 
+        private static readonly Regex RxKeyNum = new Regex(@"\[(\d+)\]\s*=\s*\{", RegexOptions.Compiled);
+        private static readonly Regex RxKeyStr = new Regex(@"\[""([^""]+)""\]\s*=\s*\{", RegexOptions.Compiled);
+        private static readonly Regex RxKv = new Regex(@"\[""([^""]+)""\]\s*=\s*(""([^""]*)""|[-+]?\d+(?:\.\d+)?)", RegexOptions.Compiled);
+
+        // Brace-depth-aware record parser (handles nested sub-tables like dipsByHour without dropping records)
         private static Dictionary<string, Dictionary<string, object>> ParseRecords(string block, bool numericKeys)
         {
             var map = new Dictionary<string, Dictionary<string, object>>();
             if (string.IsNullOrWhiteSpace(block)) return map;
 
-            var rxEntry = numericKeys
-                ? new Regex(@"\[(\d+)\]\s*=\s*\{([^{}]*)\}", RegexOptions.Compiled)
-                : new Regex(@"\[""([^""]+)""\]\s*=\s*\{([^{}]*)\}", RegexOptions.Compiled);
-            var rxKv = new Regex(@"\[""([^""]+)""\]\s*=\s*(""([^""]*)""|[-+]?\d+(?:\.\d+)?)", RegexOptions.Compiled);
-
-            foreach (Match m in rxEntry.Matches(block))
+            Regex rxHead = numericKeys ? RxKeyNum : RxKeyStr;
+            int pos = 0;
+            while (pos < block.Length)
             {
-                string key = m.Groups[1].Value;
-                string body = m.Groups[2].Value;
-                var rec = new Dictionary<string, object>();
+                Match m = rxHead.Match(block, pos);
+                if (!m.Success) break;
 
-                foreach (Match kv in rxKv.Matches(body))
+                string key = m.Groups[1].Value;
+                int braceStart = m.Index + m.Length - 1;
+                int depth = 0;
+                bool inStr = false;
+                int endIdx = -1;
+                var topLevelBody = new StringBuilder();
+
+                for (int i = braceStart; i < block.Length; i++)
+                {
+                    char ch = block[i];
+                    if (ch == '"' && (i == 0 || block[i - 1] != '\\')) inStr = !inStr;
+                    else if (!inStr)
+                    {
+                        if (ch == '{') { depth++; continue; }
+                        if (ch == '}')
+                        {
+                            depth--;
+                            if (depth == 0) { endIdx = i; break; }
+                            continue;
+                        }
+                    }
+                    if (depth == 1) topLevelBody.Append(ch);
+                }
+
+                if (endIdx < 0) break;
+                pos = endIdx + 1;
+
+                var rec = new Dictionary<string, object>();
+                foreach (Match kv in RxKv.Matches(topLevelBody.ToString()))
                 {
                     string k = kv.Groups[1].Value;
                     if (kv.Groups[3].Success) rec[k] = kv.Groups[3].Value;
@@ -1191,24 +1221,40 @@ namespace GoblinBrokerDesktop
             string file = Path.GetFileName(_cfg.SavedVarsPath);
             if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
 
-            _watcher = new FileSystemWatcher(dir, file)
+            _watcher = new FileSystemWatcher(dir, "*.*")
             {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
-                EnableRaisingEvents = true
+                InternalBufferSize = 32768,
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime | NotifyFilters.FileName
+            };
+            Action scheduleSync = () =>
+            {
+                SafeUi(() =>
+                {
+                    _debounceTimer.Stop();
+                    _debounceTimer.Start();
+                });
             };
             FileSystemEventHandler onChange = (s, e) =>
             {
-                if (IsHandleCreated)
+                if (string.Equals(e.Name, file, StringComparison.OrdinalIgnoreCase)) scheduleSync();
+            };
+            RenamedEventHandler onRenamed = (s, e) =>
+            {
+                if (string.Equals(e.Name, file, StringComparison.OrdinalIgnoreCase)) scheduleSync();
+            };
+            ErrorEventHandler onError = (s, e) =>
+            {
+                SafeUi(() =>
                 {
-                    BeginInvoke((Action)(() =>
-                    {
-                        _debounceTimer.Stop();
-                        _debounceTimer.Start();
-                    }));
-                }
+                    Log("[WARN] FileSystemWatcher overflow -> перезапуск наблюдателя...", Theme.AccentGold);
+                    SetupWatcher();
+                });
             };
             _watcher.Changed += onChange;
             _watcher.Created += onChange;
+            _watcher.Renamed += onRenamed;
+            _watcher.Error += onError;
+            _watcher.EnableRaisingEvents = true;
         }
 
         private void UpdateModeBadge()
@@ -1323,10 +1369,15 @@ namespace GoblinBrokerDesktop
 
         private static void PushViaHttps(string endpointUrl, string json)
         {
+            Uri uri;
+            if (!Uri.TryCreate(endpointUrl, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps)
+                throw new InvalidOperationException("Разрешены только HTTPS-адреса.");
+
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-            var req = (HttpWebRequest)WebRequest.Create(endpointUrl);
+            var req = (HttpWebRequest)WebRequest.Create(uri);
             req.Method = "POST";
             req.ContentType = "application/json; charset=utf-8";
+            req.Headers["X-GB-Token"] = "gb-forever-eu-v3";
             req.Timeout = 15000;
             req.UserAgent = "GoblinBrokerDesktop/3.0";
 
@@ -1383,9 +1434,14 @@ namespace GoblinBrokerDesktop
             };
             using (var p = Process.Start(psi))
             {
+                var errTask = Task.Run(() => p.StandardError.ReadToEnd());
                 string stdout = p.StandardOutput.ReadToEnd();
-                string stderr = p.StandardError.ReadToEnd();
-                p.WaitForExit(30000);
+                if (!p.WaitForExit(30000))
+                {
+                    try { p.Kill(); } catch { }
+                    throw new TimeoutException("git " + args + " превысил таймаут 30с");
+                }
+                string stderr = errTask.Result;
                 if (!ignoreError && p.ExitCode != 0)
                     throw new Exception("git " + args + " -> " + (string.IsNullOrWhiteSpace(stderr) ? stdout : stderr).Trim());
                 return stdout;
@@ -1448,9 +1504,14 @@ namespace GoblinBrokerDesktop
 
         private void SafeUi(Action act)
         {
-            if (IsDisposed) return;
-            if (InvokeRequired) BeginInvoke(act);
-            else act();
+            if (IsDisposed || !IsHandleCreated) return;
+            try
+            {
+                if (InvokeRequired) BeginInvoke(act);
+                else act();
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
         }
     }
 
@@ -1459,6 +1520,9 @@ namespace GoblinBrokerDesktop
         [STAThread]
         private static void Main(string[] args)
         {
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (s, e) => { };
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => { };
             bool createdNew;
             using (var mutex = new Mutex(true, "GoblinBrokerDesktop_SingleInstance_v3", out createdNew))
             {
