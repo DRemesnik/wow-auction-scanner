@@ -7,21 +7,24 @@ BINDING_NAME_FOREVERSNIPER_SCAN = "Старт / Пауза скана"
 BINDING_NAME_FOREVERSNIPER_TOGGLE = "Показать / Скрыть окно"
 BINDING_NAME_FOREVERSNIPER_BAIT = "Выставить наживку (1 шт)"
 
-ForeverSniperDB = ForeverSniperDB or {
-  watchlist = {}, -- [itemID] = maxUnitCopper
-  qtyLimits = {}, -- [itemID] = maxBuyQty (nil or 0 = unlimited)
-  tracked = {},   -- [itemID] = boolean (nil/true = tracked, false = skipped)
-  presets = {},   -- [name] = { watchlist = {...}, qtyLimits = {...}, tracked = {...} }
-  activePreset = nil,
-  selectedID = nil,
-  autoScan = false,
-  soundAlert = true,
-  miniMode = false,
-  railExpanded = false,
-  activeBaitID = nil,
-  skipSingleBait = false,
-  telemetry = { days = {}, items = {}, hours = {} },
-}
+local function EnsureDBDefaults()
+  ForeverSniperDB = ForeverSniperDB or {}
+  ForeverSniperDB.schemaVersion = 2
+  ForeverSniperDB.watchlist = ForeverSniperDB.watchlist or {}
+  ForeverSniperDB.qtyLimits = ForeverSniperDB.qtyLimits or {}
+  ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+  ForeverSniperDB.presets = ForeverSniperDB.presets or {}
+  if ForeverSniperDB.autoScan == nil then ForeverSniperDB.autoScan = false end
+  if ForeverSniperDB.soundAlert == nil then ForeverSniperDB.soundAlert = true end
+  if ForeverSniperDB.miniMode == nil then ForeverSniperDB.miniMode = false end
+  if ForeverSniperDB.railExpanded == nil then ForeverSniperDB.railExpanded = false end
+  if ForeverSniperDB.skipSingleBait == nil then ForeverSniperDB.skipSingleBait = false end
+  ForeverSniperDB.telemetry = ForeverSniperDB.telemetry or {}
+  ForeverSniperDB.telemetry.days = ForeverSniperDB.telemetry.days or {}
+  ForeverSniperDB.telemetry.items = ForeverSniperDB.telemetry.items or {}
+  ForeverSniperDB.telemetry.hours = ForeverSniperDB.telemetry.hours or {}
+end
+EnsureDBDefaults()
 
 local function EnsureTelemetryDB()
   ForeverSniperDB.telemetry = ForeverSniperDB.telemetry or {}
@@ -119,19 +122,23 @@ local function RecordTelemetryBuy(itemID, qty, totalCost, name, savedCopper, mkt
   hb.mktSaved = (hb.mktSaved or 0) + msv
 end
 
-local function RecordTelemetryMiss(itemID, name)
+local function RecordTelemetryMiss(itemID, name, missQty)
   if not itemID then return end
+  local q = math.max(1, tonumber(missQty) or 1)
   local t = EnsureTelemetryDB()
   local dk = TodayKey()
   local d = t.days[dk]
-  if not d then d = { buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.days[dk] = d end
+  if not d then d = { buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, missedQty = 0, dips = 0 }; t.days[dk] = d end
   d.missed = (d.missed or 0) + 1
+  d.missedQty = (d.missedQty or 0) + q
   local it = t.items[itemID]
-  if not it then it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, dips = 0 }; t.items[itemID] = it end
+  if not it then it = { name = name, buys = 0, qty = 0, spent = 0, saved = 0, missed = 0, missedQty = 0, dips = 0 }; t.items[itemID] = it end
   it.missed = (it.missed or 0) + 1
+  it.missedQty = (it.missedQty or 0) + q
   if name and not it.name then it.name = name end
   local hb = TouchHourBucket(t, HourKey())
   hb.missed = (hb.missed or 0) + 1
+  hb.missedQty = (hb.missedQty or 0) + q
 end
 
 local function IsSoundEnabled()
@@ -187,7 +194,7 @@ local state = {
   queue = {},
   idx = 1,
   lastQueryAt = 0,
-  queryInterval = 0.25, -- Fast 4/sec polling for earliest deal detection
+  queryInterval = 0.25, -- Legal AH polling floor (0.25s 1-item / 0.30s multi) with closed-loop 1-in-flight pacing
   queryCount = 0,
   pendingDeal = nil,   -- { itemID, isCommodity, auctionID, unitPrice, qty, maxPrice, name, stage, confirmAt }
   throttled = false,
@@ -265,10 +272,12 @@ do
     else
       out = "|cffffffff" .. c .. "|r" .. ICON_COPPER
     end
-    if coinsCnt < 512 then
-      coinsCache[copper] = out
-      coinsCnt = coinsCnt + 1
+    if coinsCnt >= 2048 then
+      coinsCache = {}
+      coinsCnt = 0
     end
+    coinsCache[copper] = out
+    coinsCnt = coinsCnt + 1
     return out
   end
 
@@ -287,10 +296,12 @@ do
     else
       out = c .. "c"
     end
-    if plainCnt < 512 then
-      plainCache[copper] = out
-      plainCnt = plainCnt + 1
+    if plainCnt >= 2048 then
+      plainCache = {}
+      plainCnt = 0
     end
+    plainCache[copper] = out
+    plainCnt = plainCnt + 1
     return out
   end
 end
@@ -373,13 +384,17 @@ local function CreateFlatButton(name, parent, w, h, text)
   btn.isEnabled = true
 
   function btn:SetColors(bg, hover, border, textColor)
+    if self.baseBg == bg and self.hoverBg == hover and self.baseBorder == border and self._textCol == textColor then
+      return
+    end
     self.baseBg = bg
     self.hoverBg = hover
     self.baseBorder = border
-    self:SetBackdropColor(unpack(bg))
-    self:SetBackdropBorderColor(unpack(border))
+    self._textCol = textColor
+    self:SetBackdropColor(bg[1], bg[2], bg[3], bg[4] or 1)
+    self:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
     if textColor then
-      self.label:SetTextColor(unpack(textColor))
+      self.label:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4] or 1)
     else
       self.label:SetTextColor(0.92, 0.95, 0.99)
     end
@@ -459,6 +474,7 @@ end
 -- Main Frame (Goblin Broker: Forever — Branded Navy / Gold / Emerald)
 -- ============================================================================
 local f = CreateFrame("Frame", "ForeverSniperFrame", UIParent, "BackdropTemplate")
+-- Calibrator, EventLog & StatDB methods are attached by Calibrator.lua
 f:SetSize(572, 585)
 f:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -30, 100)
 f:SetFrameStrata("DIALOG")
@@ -489,6 +505,35 @@ f:SetScript("OnDragStop", function(self)
   self:StopMovingOrSizing()
   ForeverSniperDB.windowPos = CaptureWindowPos()
 end)
+
+f._saveModalPos = function(frame, key)
+  if not frame or not key or not ForeverSniperDB then return end
+  local point, _, relPoint, x, y = frame:GetPoint(1)
+  if not point then return end
+  ForeverSniperDB.modalPos = ForeverSniperDB.modalPos or {}
+  ForeverSniperDB.modalPos[key] = {
+    point = point,
+    relPoint = relPoint or point,
+    x = math.floor((x or 0) + 0.5),
+    y = math.floor((y or 0) + 0.5),
+  }
+end
+
+f._restoreModalPos = function(frame, key)
+  local pos = ForeverSniperDB and ForeverSniperDB.modalPos and ForeverSniperDB.modalPos[key]
+  if type(pos) ~= "table" or not pos.point then return end
+  frame:ClearAllPoints()
+  frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+end
+
+f._closePopovers = function(exceptFrame)
+  if f.presetMenu and f.presetMenu ~= exceptFrame and f.presetMenu:IsShown() then
+    f.presetMenu:Hide()
+  end
+  if f._keybindPopover and f._keybindPopover ~= exceptFrame and f._keybindPopover:IsShown() then
+    f._keybindPopover:Hide()
+  end
+end
 f:SetBackdrop(FLAT_BACKDROP)
 f:SetBackdropColor(0.043, 0.067, 0.125, 1) -- #0B1120 Goblin Broker Navy (opaque)
 f:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
@@ -522,7 +567,7 @@ title:SetText("|cfff59e0bGoblin Broker|r|cfff8fafc: Forever|r")
 
 local subtitle = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("BOTTOMLEFT", brandMark, "BOTTOMRIGHT", 10, 1)
-subtitle:SetText("|cff94a3b8EU Орда | AH Снайпер (1с)|r")
+subtitle:SetText("|cff94a3b8EU Орда · Боевой выкуп|r")
 
 -- Close button
 local closeBtn = CreateFlatButton(nil, f, 26, 26, "X")
@@ -532,11 +577,96 @@ closeBtn:SetScript("OnClick", function() f:Hide() end)
 
 -- Live Status Pill
 local statusPill = CreateFrame("Frame", nil, f, "BackdropTemplate")
-statusPill:SetSize(148, 26)
+statusPill:SetSize(134, 26)
 statusPill:SetPoint("RIGHT", closeBtn, "LEFT", -6, 0)
 statusPill:SetBackdrop(FLAT_BACKDROP)
 statusPill:SetBackdropColor(0.07, 0.10, 0.18, 1)
 statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
+
+-- Top-Header Segmented Mode Switcher: [ Снайпер | Сканер ]
+do
+  local seg = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  seg:SetSize(136, 26)
+  seg:SetPoint("RIGHT", statusPill, "LEFT", -8, 0)
+  seg:SetBackdrop(FLAT_BACKDROP)
+  seg:SetBackdropColor(0.03, 0.05, 0.09, 1)
+  seg:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
+
+  local btnSnipe = CreateFlatButton(nil, seg, 66, 22, "Снайпер")
+  btnSnipe:SetPoint("LEFT", 2, 0)
+  local btnScan = CreateFlatButton(nil, seg, 66, 22, "Сканер")
+  btnScan:SetPoint("RIGHT", -2, 0)
+
+  local function RefreshModeSwitcher()
+    local isScanner = (state.scanMode == "scanner")
+    if isScanner then
+      btnSnipe:SetColors({ 0, 0, 0, 0 }, { 0.10, 0.15, 0.24, 1 }, { 0, 0, 0, 0 }, { 0.55, 0.64, 0.76 })
+      btnScan:SetColors({ 0.04, 0.26, 0.36, 1 }, { 0.06, 0.34, 0.46, 1 }, { 0.0, 0.78, 0.92, 0.95 }, { 0.92, 0.99, 1 })
+      topAccent:SetGradient("HORIZONTAL", CreateColor(0.0, 0.71, 0.85, 1), CreateColor(0.22, 0.50, 0.96, 1))
+      subtitle:SetText("|cff06b6d4EU Орда · Радар ликвидности|r")
+      if not ForeverSniperDB.miniMode then
+        if NS.wlBox then NS.wlBox:Hide() end
+        if f._radarBox then f._radarBox:Show() end
+        if NS.RenderInlineRadar then NS.RenderInlineRadar() end
+      end
+      if NS.dealStripe then NS.dealStripe:SetColorTexture(0.0, 0.71, 0.85, 1) end
+      if NS.dealCard then NS.dealCard:SetBackdropBorderColor(0.0, 0.71, 0.85, 0.75) end
+      if NS.dealBadge then NS.dealBadge:SetText("|cff06b6d4РЕЖИМ СКАНЕРА (БЕЗ ВЫКУПА)|r") end
+      if NS.dealDelta then NS.dealDelta:SetText("|cff64748bАвтосохранение · /reload|r") end
+      if NS.dealTitle then NS.dealTitle:SetText("|cffcbd5e1Живой радар ликвидности АХ|r") end
+      if NS.dealMeta then NS.dealMeta:SetText("|cff64748bПКМ по любой строке выше → добавить в Снайпер (-15%)|r") end
+    else
+      btnSnipe:SetColors({ 0.03, 0.28, 0.20, 1 }, { 0.05, 0.36, 0.26, 1 }, { 0.06, 0.73, 0.51, 0.95 }, { 0.92, 1, 0.96 })
+      btnScan:SetColors({ 0, 0, 0, 0 }, { 0.10, 0.15, 0.24, 1 }, { 0, 0, 0, 0 }, { 0.55, 0.64, 0.76 })
+      topAccent:SetGradient("HORIZONTAL", CreateColor(0.92, 0.70, 0.03, 1), CreateColor(0.06, 0.73, 0.51, 1))
+      subtitle:SetText("|cff94a3b8EU Орда · Боевой выкуп|r")
+      if f._radarBox then f._radarBox:Hide() end
+      if not ForeverSniperDB.miniMode and NS.wlBox then NS.wlBox:Show() end
+    end
+  end
+
+  local function SetScanMode(mode)
+    local target = (mode == "scanner") and "scanner" or "sniper"
+    if state.scanMode == target then return end
+    state.scanMode = target
+    if target == "scanner" then
+      if ClearPendingDeal then ClearPendingDeal(false, true) end
+      print("|cff06b6d4Goblin Broker:|r режим |cffffffffСканер ликвидности|r (покупки отключены).")
+    else
+      if ClearPendingDeal then ClearPendingDeal(false, false) end
+      print("|cff10b981Goblin Broker:|r боевой режим |cffffffffСнайпер|r.")
+    end
+    RefreshModeSwitcher()
+    if NS.RefreshBuyButtonText then NS.RefreshBuyButtonText() end
+    if UpdateStatus then UpdateStatus() end
+  end
+
+  btnSnipe:SetScript("OnClick", function() SetScanMode("sniper") end)
+  btnScan:SetScript("OnClick", function() SetScanMode("scanner") end)
+  btnSnipe:HookScript("OnEnter", function(self)
+    if GameTooltip then
+      GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+      GameTooltip:AddLine("Режим: Снайпер (боевой выкуп)", 0.06, 0.85, 0.55)
+      GameTooltip:AddLine("Отслеживает просадки ниже лимита и включает кнопку КУПИТЬ.", 0.85, 0.90, 0.96, true)
+      GameTooltip:Show()
+    end
+  end)
+  btnSnipe:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  btnScan:HookScript("OnEnter", function(self)
+    if GameTooltip then
+      GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+      GameTooltip:AddLine("Режим: Сканер ликвидности", 0.0, 0.82, 0.95)
+      GameTooltip:AddLine("Спокойно обходит весь список, считает Score (CLS), спред и скорость выкупа/ч. Покупки отключены.", 0.85, 0.90, 0.96, true)
+      GameTooltip:Show()
+    end
+  end)
+  btnScan:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+
+  f._refreshModeSwitcher = RefreshModeSwitcher
+  NS.SetScanMode = SetScanMode
+  NS.RefreshModeUI = RefreshModeSwitcher
+  RefreshModeSwitcher()
+end
 
 local statusText = statusPill:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 statusText:SetPoint("CENTER")
@@ -545,13 +675,16 @@ statusPill:EnableMouse(true)
 statusPill:SetScript("OnEnter", function(self)
   if not GameTooltip then return end
   GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
-  GameTooltip:AddLine("Быстродействие системы", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine(string.format("Live Автокалибровка #%d (N=12, RFC 6298)", state.calEpoch or 0), 0.96, 0.70, 0.03)
+  local breathSec, minInt, qTo, cTo = f._getCalibrated()
   local rtt = state.avgRttMs
   local rCol = (not rtt or rtt <= 120) and {0.06, 0.85, 0.55} or (rtt <= 250 and {0.96, 0.70, 0.03} or {0.95, 0.35, 0.40})
-  GameTooltip:AddDoubleLine("Отклик АХ (RTT):", rtt and (rtt .. " мс") or "—", 0.85, 0.90, 0.96, rCol[1], rCol[2], rCol[3])
-  GameTooltip:AddDoubleLine("Бронь цены (Quote):", state.lastQuoteMs and (state.lastQuoteMs .. " мс") or "—", 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
-  local iv = state.queryInterval or 0.25
-  GameTooltip:AddDoubleLine("Темп скана:", string.format("%.2fс (%.1f/с)", iv, 1 / math.max(0.1, iv)), 0.85, 0.90, 0.96, 1, 1, 1)
+  GameTooltip:AddDoubleLine("Отклик АХ (RTT / p90):", rtt and string.format("%d ± %d мс (p90: %s)", rtt, state.rttVarMs or 0, tostring(state.p90RttMs or "—")) or "—", 0.85, 0.90, 0.96, rCol[1], rCol[2], rCol[3])
+  GameTooltip:AddDoubleLine("Бронь (Quote / ТО):", string.format("%s мс | p90:%s (%.2fс)", tostring(state.emaQuoteMs or state.lastQuoteMs or "—"), tostring(state.p90QuoteMs or "—"), qTo), 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
+  GameTooltip:AddDoubleLine("Подтв. (Conf / ТО):", string.format("%s мс | p90:%s (%.2fс)", tostring(state.emaConfMs or "—"), tostring(state.p90ConfMs or "—"), cTo), 0.85, 0.90, 0.96, 0.78, 0.86, 0.96)
+  local bMs = math.floor(breathSec * 1000 + 0.5)
+  local cycSec = math.max(minInt, ((rtt or 150) + bMs) / 1000)
+  GameTooltip:AddDoubleLine("Легальный темп (1-in-flight):", string.format("пол %.2fс | +%dмс (~%.1f/с)", minInt, bMs, 1 / math.max(0.25, cycSec)), 0.85, 0.90, 0.96, 0.06, 0.85, 0.55)
   GameTooltip:Show()
 end)
 statusPill:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
@@ -563,17 +696,28 @@ hdrDiv:SetPoint("TOPRIGHT", -12, -50)
 hdrDiv:SetColorTexture(0.18, 0.24, 0.36, 0.75)
 
 -- ============================================================================
--- Left Expandable Tool Sidebar (under app logo: 40px icons <-> 134px icons+labels)
+-- Left Expandable Tool Sidebar — 3 Logical Groups + Stationary Overlay Drawer
+-- Main window (572px) & Buy CTA NEVER jump; rail expands as an overlay drawer
 -- ============================================================================
 local toolRail = CreateFrame("Frame", nil, f, "BackdropTemplate")
 toolRail:SetWidth(36)
 toolRail:SetPoint("TOPLEFT", 14, -60)
 toolRail:SetPoint("BOTTOMLEFT", 14, 14)
+toolRail:SetFrameLevel((f:GetFrameLevel() or 1) + 2)
 toolRail:SetBackdrop(FLAT_BACKDROP)
-toolRail:SetBackdropColor(0.028, 0.042, 0.082, 1)
+toolRail:SetBackdropColor(0.028, 0.042, 0.082, 0.98)
 toolRail:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
 
+-- Subtle right shadow strip visible when drawer is expanded over content
+local railDrawerShadow = toolRail:CreateTexture(nil, "BACKGROUND")
+railDrawerShadow:SetWidth(10)
+railDrawerShadow:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 0, 0)
+railDrawerShadow:SetPoint("BOTTOMLEFT", toolRail, "BOTTOMRIGHT", 0, 0)
+railDrawerShadow:SetColorTexture(0, 0, 0, 0.50)
+railDrawerShadow:Hide()
+
 local railButtons = {}
+local railGroupLabels = {}
 local function MakeRailButton(yParent, yOff, texPath, labelTxt, isBottom)
   local btn = CreateFlatButton(nil, toolRail, 28, 26, "")
   if isBottom then
@@ -606,32 +750,126 @@ local function MakeRailButton(yParent, yOff, texPath, labelTxt, isBottom)
   return btn
 end
 
--- 0. Expand / Collapse Sidebar Toggle
+-- 0. Expand / Collapse Overlay Drawer Toggle
 local railToggleBtn = CreateFlatButton(nil, toolRail, 28, 22, ">>")
 railToggleBtn:SetPoint("TOPLEFT", 4, -4)
 railToggleBtn:SetPoint("TOPRIGHT", -4, -4)
 railToggleBtn:SetColors({ 0.07, 0.10, 0.17, 1 }, { 0.13, 0.18, 0.28, 1 }, { 0.20, 0.28, 0.40, 0.7 }, { 0.78, 0.86, 0.96 })
 railToggleBtn:HookScript("OnEnter", function(self)
   GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-  GameTooltip:AddLine(ForeverSniperDB.railExpanded and "Свернуть панель" or "Развернуть панель с названиями", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine(ForeverSniperDB.railExpanded and "Свернуть панель" or "Развернуть меню (без сдвига окна)", 0.96, 0.70, 0.03)
   GameTooltip:Show()
 end)
 railToggleBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
 
--- 1. Mini / Full Mode Toggle
-local miniBtn = MakeRailButton(railToggleBtn, -6, "Interface\\AddOns\\ForeverSniper\\rail_mini.tga", "Мини-режим")
-miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.85, 0.90, 0.96 })
-miniBtn:HookScript("OnEnter", function(self)
-  if ForeverSniperDB.railExpanded then return end
+-- Micro-header 1: ТОРГОВЛЯ (visible when drawer expanded)
+local lblTrade = toolRail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+lblTrade:SetPoint("TOPLEFT", railToggleBtn, "BOTTOMLEFT", 2, -6)
+lblTrade:SetText("|cff64748bТОРГОВЛЯ|r")
+lblTrade:Hide()
+table.insert(railGroupLabels, lblTrade)
+
+-- GROUP 1 — ТОРГОВЛЯ (Bait + Skip 1pc; Mode switcher lives in Top Header)
+f._railToggleBtn = railToggleBtn
+do
+  local baitBtn = MakeRailButton(railToggleBtn, -22, "Interface\\AddOns\\ForeverSniper\\rail_bait.tga", "На живца")
+  baitBtn:SetColors({ 0.14, 0.10, 0.06, 1 }, { 0.22, 0.16, 0.08, 1 }, { 0.92, 0.70, 0.03, 0.75 }, { 0.99, 0.86, 0.45 })
+  baitBtn:HookScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine("На живца (Ловушка)", 0.96, 0.70, 0.03)
+    GameTooltip:AddLine("Выставить 1 шт на мин. срок (2ч/12ч) по заданной цене", 0.85, 0.90, 0.96, true)
+    GameTooltip:Show()
+  end)
+  baitBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+  f._baitBtn = baitBtn
+
+  local skip1Btn = MakeRailButton(baitBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_skip1.tga", "Пропуск 1шт: ВЫКЛ")
+  local function RefreshRailSkip1Btn()
+    if ForeverSniperDB.skipSingleBait then
+      skip1Btn:SetColors({ 0.04, 0.22, 0.16, 1 }, { 0.06, 0.30, 0.22, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 0.85, 1, 0.94 })
+      if skip1Btn.ico then skip1Btn.ico:SetDesaturated(false); skip1Btn.ico:SetAlpha(1) end
+      skip1Btn.railText:SetText("|cff10b981Пропуск 1шт: ВКЛ|r")
+    else
+      skip1Btn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.45, 0.52, 0.62 })
+      if skip1Btn.ico then skip1Btn.ico:SetDesaturated(true); skip1Btn.ico:SetAlpha(0.45) end
+      skip1Btn.railText:SetText("|cff64748bПропуск 1шт: ВЫКЛ|r")
+    end
+  end
+  skip1Btn:SetScript("OnClick", function()
+    ForeverSniperDB.skipSingleBait = not ForeverSniperDB.skipSingleBait
+    if f._refreshSkip1Btn then f._refreshSkip1Btn() end
+    if ForeverSniperDB.skipSingleBait then
+      print("|cfff59e0bGoblin Broker:|r фильтр «Пропуск 1 шт» |cff10b981ВКЛ|r — игнорируем стакаемые лоты по 1 шт.")
+    else
+      print("|cfff59e0bGoblin Broker:|r фильтр «Пропуск 1 шт» |cff94a3b8ВЫКЛ|r — ловим все лоты.")
+    end
+  end)
+  skip1Btn:HookScript("OnEnter", function(self)
+    if GameTooltip then
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      GameTooltip:AddLine(ForeverSniperDB.skipSingleBait and "Пропуск 1 шт (наживка): ВКЛ" or "Пропуск 1 шт (наживка): ВЫКЛ", 0.96, 0.70, 0.03)
+      GameTooltip:AddLine("Пропускать стакаемые лоты по 1 шт, чтобы ловить реальные пачки (2+ шт).", 0.85, 0.90, 0.96, true)
+      GameTooltip:Show()
+    end
+  end)
+  skip1Btn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  f._skip1Btn = skip1Btn
+  f._refreshRailSkip1Btn = RefreshRailSkip1Btn
+end
+
+-- Divider 1 + Micro-header 2: ДАННЫЕ
+local railDiv = toolRail:CreateTexture(nil, "ARTWORK")
+railDiv:SetHeight(1)
+railDiv:SetPoint("TOPLEFT", f._skip1Btn, "BOTTOMLEFT", 4, -8)
+railDiv:SetPoint("TOPRIGHT", f._skip1Btn, "BOTTOMRIGHT", -4, -8)
+railDiv:SetColorTexture(0.20, 0.28, 0.40, 0.85)
+
+local lblData = toolRail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+lblData:SetPoint("TOPLEFT", railDiv, "BOTTOMLEFT", -2, -5)
+lblData:SetText("|cff64748bДАННЫЕ|r")
+lblData:Hide()
+table.insert(railGroupLabels, lblData)
+
+-- GROUP 2 — ДАННЫЕ (Аналитика/Лог + Импорт)
+local logBtn = MakeRailButton(f._skip1Btn, -26, "Interface\\AddOns\\ForeverSniper\\rail_log.tga", "Аналитика (0)")
+logBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.92, 0.70, 0.03 })
+
+local logBadgeCount = logBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+logBadgeCount:SetPoint("TOPRIGHT", 2, 2)
+logBadgeCount:SetText("")
+logBadgeCount:Hide()
+
+local importBtn = MakeRailButton(logBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_import.tga", "Импорт")
+importBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.0, 0.71, 0.85, 0.65 }, { 0.75, 0.92, 1 })
+importBtn:HookScript("OnEnter", function(self)
   GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-  GameTooltip:AddLine(ForeverSniperDB.miniMode and "Полный режим" or "Мини-режим", 0.96, 0.70, 0.03)
-  GameTooltip:AddLine("Свернуть/развернуть список и настройки", 0.85, 0.90, 0.96)
+  GameTooltip:AddLine("Импорт из дашборда", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Вставить список itemID=цена[:кол-во]", 0.85, 0.90, 0.96)
   GameTooltip:Show()
 end)
-miniBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+importBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
 
--- 2. Sound Alert Toggle (works in background via Sound_EnableSoundWhenGameIsInBG)
-local soundBtn = MakeRailButton(miniBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_sound.tga", "Звук: ВКЛ")
+-- GROUP 3 — СИСТЕМА (pinned from bottom up: Клавиши, Звук, Мини-режим)
+local hotkeyBtn = MakeRailButton(nil, nil, "Interface\\AddOns\\ForeverSniper\\rail_hotkey.tga", "Клавиши", true)
+hotkeyBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.98, 0.94, 0.54 })
+hotkeyBtn:HookScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  GameTooltip:AddLine("Горячие клавиши", 0.96, 0.70, 0.03)
+  local bk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BUY")
+  local sk = GetBindingKey and GetBindingKey("FOREVERSNIPER_SCAN")
+  local btk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BAIT")
+  GameTooltip:AddDoubleLine("Купить / Подтв.:", bk or "не задана", 0.85, 0.90, 0.96, 0.98, 0.94, 0.54)
+  GameTooltip:AddDoubleLine("Старт / Пауза:", sk or "не задана", 0.85, 0.90, 0.96, 0.85, 0.90, 0.96)
+  GameTooltip:AddDoubleLine("Наживка (1 шт):", btk or "не задана", 0.85, 0.90, 0.96, 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Клик: быстрое назначение клавиш и колеса мыши", 0.60, 0.72, 0.84, true)
+  GameTooltip:Show()
+end)
+hotkeyBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+
+local soundBtn = MakeRailButton(nil, 0, "Interface\\AddOns\\ForeverSniper\\rail_sound.tga", "Звук: ВКЛ")
+soundBtn:ClearAllPoints()
+soundBtn:SetPoint("BOTTOMLEFT", hotkeyBtn, "TOPLEFT", 0, 5)
+soundBtn:SetPoint("BOTTOMRIGHT", hotkeyBtn, "TOPRIGHT", 0, 5)
 
 local function RefreshSoundBtn()
   if IsSoundEnabled() then
@@ -659,7 +897,6 @@ soundBtn:SetScript("OnClick", function()
 end)
 
 soundBtn:HookScript("OnEnter", function(self)
-  if ForeverSniperDB.railExpanded then return end
   if GameTooltip then
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(IsSoundEnabled() and "Звуковой сигнал: ВКЛ" or "Звуковой сигнал: ВЫКЛ", 0.96, 0.70, 0.03)
@@ -671,117 +908,42 @@ soundBtn:HookScript("OnLeave", function()
   if GameTooltip then GameTooltip:Hide() end
 end)
 
--- 3. Session Purchase Log Button (with numeric badge when > 0)
-local logBtn = MakeRailButton(soundBtn, -5, "Interface\\AddOns\\ForeverSniper\\rail_log.tga", "Лог (0)")
-logBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.92, 0.70, 0.03 })
-
-local logBadgeCount = logBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-logBadgeCount:SetPoint("TOPRIGHT", 2, 2)
-logBadgeCount:SetText("")
-logBadgeCount:Hide()
-
-local railDiv = toolRail:CreateTexture(nil, "ARTWORK")
-railDiv:SetHeight(1)
-railDiv:SetPoint("TOPLEFT", logBtn, "BOTTOMLEFT", 4, -6)
-railDiv:SetPoint("TOPRIGHT", logBtn, "BOTTOMRIGHT", -4, -6)
-railDiv:SetColorTexture(0.20, 0.28, 0.40, 0.85)
-
--- 4. Import (shown in Full Mode)
-local importBtn = MakeRailButton(logBtn, -13, "Interface\\AddOns\\ForeverSniper\\rail_import.tga", "Импорт")
-importBtn:SetColors({ 0.09, 0.13, 0.21, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.0, 0.71, 0.85, 0.65 }, { 0.75, 0.92, 1 })
-importBtn:HookScript("OnEnter", function(self)
-  if ForeverSniperDB.railExpanded then return end
+local miniBtn = MakeRailButton(nil, 0, "Interface\\AddOns\\ForeverSniper\\rail_mini.tga", "Мини-режим")
+miniBtn:ClearAllPoints()
+miniBtn:SetPoint("BOTTOMLEFT", soundBtn, "TOPLEFT", 0, 5)
+miniBtn:SetPoint("BOTTOMRIGHT", soundBtn, "TOPRIGHT", 0, 5)
+miniBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.85, 0.90, 0.96 })
+miniBtn:HookScript("OnEnter", function(self)
   GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-  GameTooltip:AddLine("Импорт из дашборда", 0.96, 0.70, 0.03)
-  GameTooltip:AddLine("Вставить список itemID=цена[:кол-во]", 0.85, 0.90, 0.96)
+  GameTooltip:AddLine(ForeverSniperDB.miniMode and "Полный режим" or "Мини-режим", 0.96, 0.70, 0.03)
+  GameTooltip:AddLine("Свернуть/развернуть список и настройки", 0.85, 0.90, 0.96)
   GameTooltip:Show()
 end)
-importBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
+miniBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
 
--- 4b. Bait Posting ("На живца", shown in Full Mode)
 do
-  local baitBtn = MakeRailButton(importBtn, -5, "Interface\\Icons\\INV_Misc_Fish_02", "На живца")
-  baitBtn:SetColors({ 0.14, 0.10, 0.06, 1 }, { 0.22, 0.16, 0.08, 1 }, { 0.92, 0.70, 0.03, 0.75 }, { 0.99, 0.86, 0.45 })
-  if baitBtn.ico then
-    baitBtn.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  end
-  baitBtn:HookScript("OnEnter", function(self)
-    if ForeverSniperDB.railExpanded then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:AddLine("На живца (Ловушка)", 0.96, 0.70, 0.03)
-    GameTooltip:AddLine("Выставить 1 шт на мин. срок (2ч/12ч) по заданной цене", 0.85, 0.90, 0.96, true)
-    GameTooltip:Show()
-  end)
-  baitBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
-  f._baitBtn = baitBtn
+  local sysDiv = toolRail:CreateTexture(nil, "ARTWORK")
+  sysDiv:SetHeight(1)
+  sysDiv:SetPoint("BOTTOMLEFT", miniBtn, "TOPLEFT", 4, 8)
+  sysDiv:SetPoint("BOTTOMRIGHT", miniBtn, "TOPRIGHT", -4, 8)
+  sysDiv:SetColorTexture(0.20, 0.28, 0.40, 0.85)
+  f._railSysDiv = sysDiv
 
-  local skip1Btn = MakeRailButton(baitBtn, -5, "Interface\\Icons\\INV_Misc_Spyglass_02", "Пропуск 1шт: ВЫКЛ")
-  if skip1Btn.ico then
-    skip1Btn.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  end
-  local function RefreshRailSkip1Btn()
-    if ForeverSniperDB.skipSingleBait then
-      skip1Btn:SetColors({ 0.16, 0.12, 0.03, 1 }, { 0.24, 0.18, 0.05, 1 }, { 0.92, 0.70, 0.03, 0.85 }, { 1, 0.94, 0.70 })
-      if skip1Btn.ico then skip1Btn.ico:SetDesaturated(false); skip1Btn.ico:SetAlpha(1) end
-      skip1Btn.railText:SetText("|cfff59e0bПропуск 1шт: ВКЛ|r")
-    else
-      skip1Btn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.45, 0.52, 0.62 })
-      if skip1Btn.ico then skip1Btn.ico:SetDesaturated(true); skip1Btn.ico:SetAlpha(0.45) end
-      skip1Btn.railText:SetText("|cff64748bПропуск 1шт: ВЫКЛ|r")
-    end
-  end
-  skip1Btn:SetScript("OnClick", function()
-    ForeverSniperDB.skipSingleBait = not ForeverSniperDB.skipSingleBait
-    if f._refreshSkip1Btn then f._refreshSkip1Btn() end
-    if ForeverSniperDB.skipSingleBait then
-      print("|cfff59e0bGoblin Broker:|r фильтр «Пропуск 1 шт» |cff10b981ВКЛ|r — игнорируем стакаемые лоты по 1 шт.")
-    else
-      print("|cfff59e0bGoblin Broker:|r фильтр «Пропуск 1 шт» |cff94a3b8ВЫКЛ|r — ловим все лоты.")
-    end
-  end)
-  skip1Btn:HookScript("OnEnter", function(self)
-    if ForeverSniperDB.railExpanded then return end
-    if GameTooltip then
-      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-      GameTooltip:AddLine(ForeverSniperDB.skipSingleBait and "Пропуск 1 шт (наживка): ВКЛ" or "Пропуск 1 шт (наживка): ВЫКЛ", 0.96, 0.70, 0.03)
-      GameTooltip:AddLine("Пропускать стакаемые лоты по 1 шт, чтобы ловить реальные пачки (2+ шт).", 0.85, 0.90, 0.96, true)
-      GameTooltip:Show()
-    end
-  end)
-  skip1Btn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-  f._skip1Btn = skip1Btn
-  f._refreshRailSkip1Btn = RefreshRailSkip1Btn
+  local lblSys = toolRail:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  lblSys:SetPoint("BOTTOMLEFT", sysDiv, "TOPLEFT", -2, 4)
+  lblSys:SetText("|cff64748bСИСТЕМА|r")
+  lblSys:Hide()
+  table.insert(railGroupLabels, lblSys)
 end
 
--- 5. Keybind / Sniper Hotkey Info (pinned to bottom of rail)
-local hotkeyBtn = MakeRailButton(nil, nil, "Interface\\AddOns\\ForeverSniper\\rail_hotkey.tga", "Клавиши", true)
-hotkeyBtn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.14, 0.19, 0.29, 1 }, { 0.22, 0.29, 0.42, 1 }, { 0.98, 0.94, 0.54 })
-hotkeyBtn:HookScript("OnEnter", function(self)
-  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-  GameTooltip:AddLine("Горячие клавиши", 0.96, 0.70, 0.03)
-  local bk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BUY")
-  local sk = GetBindingKey and GetBindingKey("FOREVERSNIPER_SCAN")
-  local btk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BAIT")
-  GameTooltip:AddDoubleLine("Купить / Подтв.:", bk or "не задана", 0.85, 0.90, 0.96, 0.98, 0.94, 0.54)
-  GameTooltip:AddDoubleLine("Старт / Пауза:", sk or "не задана", 0.85, 0.90, 0.96, 0.85, 0.90, 0.96)
-  GameTooltip:AddDoubleLine("Наживка (1 шт):", btk or "не задана", 0.85, 0.90, 0.96, 0.96, 0.70, 0.03)
-  GameTooltip:AddLine("Назначить: ESC -> Назначение клавиш -> Goblin Broker", 0.60, 0.72, 0.84, true)
-  GameTooltip:Show()
-end)
-hotkeyBtn:HookScript("OnLeave", function() GameTooltip:Hide() end)
-hotkeyBtn:SetScript("OnClick", function()
-  local bk = GetBindingKey and GetBindingKey("FOREVERSNIPER_BUY")
-  print("|cfff59e0bGoblin Broker:|r клавиша покупки: |cfffef08a" .. (bk or "не задана") .. "|r (ESC -> Назначение клавиш -> Goblin Broker: Forever).")
-end)
-
 -- ============================================================================
--- Section 1: Unified Header Bar (Preset Picker + Save + Add Item)
+-- Section 1: Unified Header Bar (Anchored to main frame — NEVER shifts!)
 -- ============================================================================
 local SyncActivePresetSnapshot
 local UpdateStatus, OpenExportModal, RefreshOverrideBindings, ClearPendingDeal
 local presetBar = CreateFrame("Frame", nil, f)
-presetBar:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, 0)
-presetBar:SetPoint("TOPRIGHT", -12, -60)
+presetBar:SetPoint("TOPLEFT", f, "TOPLEFT", 60, -60)
+presetBar:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -60)
 presetBar:SetHeight(26)
 
 local addToggleBtn = CreateFlatButton(nil, presetBar, 132, 22, "+ Добавить товар")
@@ -1051,13 +1213,13 @@ do
   colHdr:SetPoint("TOPRIGHT", -6, -5)
   colHdr:SetHeight(16)
   local c1 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  c1:SetPoint("LEFT", 36, 0); c1:SetText("|cff64748bТовар|r")
+  c1:SetPoint("LEFT", 57, 0); c1:SetWidth(122); c1:SetJustifyH("LEFT"); c1:SetText("|cff64748bТовар|r")
   local c2 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  c2:SetPoint("LEFT", 190, 0); c2:SetText("|cff64748bЛимит|r")
+  c2:SetPoint("LEFT", 198, 0); c2:SetWidth(72); c2:SetJustifyH("CENTER"); c2:SetText("|cff64748bЛимит|r")
   local c3 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  c3:SetPoint("LEFT", 278, 0); c3:SetText("|cff64748bАХ мин.|r")
+  c3:SetPoint("LEFT", 301, 0); c3:SetWidth(80); c3:SetJustifyH("LEFT"); c3:SetText("|cff64748bАХ мин.|r")
   local c4 = colHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  c4:SetPoint("RIGHT", -28, 0); c4:SetText("|cff64748bОсталось|r")
+  c4:SetPoint("RIGHT", -32, 0); c4:SetWidth(74); c4:SetJustifyH("RIGHT"); c4:SetText("|cff64748bОсталось|r")
 end
 
 local isCfgOpen = false
@@ -1078,10 +1240,11 @@ end
 
 local function SyncAdaptiveLayout()
   if ForeverSniperDB.miniMode then return end
-  local rowsVis = isCfgOpen and 6 or 10
+  -- Fixed stable 6-row height: window never jumps when switching presets
+  local rowsVis = 6
   local boxH = 34 + rowsVis * 34
   wlBox:SetHeight(boxH)
-  f:SetHeight((isCfgOpen and 416 or 286) + boxH)
+  f:SetHeight((isCfgOpen and 438 or 308) + boxH)
 end
 
 SetCfgOpen = function(open)
@@ -1153,7 +1316,7 @@ do
   local obSub = ob:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   obSub:SetPoint("TOP", obTitle, "BOTTOM", 0, -6)
   obSub:SetText("|cff94a3b8Загрузите готовые наборы под рынок Forever или вставьте Импорт|r")
-  local obBtn = CreateFlatButton(nil, ob, 250, 28, "Загрузить 5 PRO-наборов под Forever")
+  local obBtn = CreateFlatButton(nil, ob, 250, 28, "Загрузить 6 PRO-наборов под Forever")
   obBtn:SetPoint("TOP", obSub, "BOTTOM", 0, -14)
   obBtn:SetColors({ 0.02, 0.42, 0.30, 1 }, { 0.04, 0.56, 0.40, 1 }, { 0.06, 0.73, 0.51, 0.9 }, { 1, 1, 1 })
   ob.btn = obBtn
@@ -1191,6 +1354,22 @@ dealBadge:SetText("|cff94a3b8ОЖИДАНИЕ|r")
 local dealDelta = dealCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 dealDelta:SetPoint("TOPRIGHT", -14, -8)
 dealDelta:SetText("")
+
+do
+  local dIcoFrame = CreateFrame("Frame", nil, dealCard, "BackdropTemplate")
+  dIcoFrame:SetSize(44, 44)
+  dIcoFrame:SetPoint("BOTTOMLEFT", 12, 10)
+  dIcoFrame:SetBackdrop(FLAT_BACKDROP)
+  dIcoFrame:SetBackdropColor(0.05, 0.08, 0.14, 1)
+  dIcoFrame:SetBackdropBorderColor(0.22, 0.30, 0.44, 1)
+  dIcoFrame:Hide()
+  local dIcoTex = dIcoFrame:CreateTexture(nil, "ARTWORK")
+  dIcoTex:SetPoint("TOPLEFT", 2, -2)
+  dIcoTex:SetPoint("BOTTOMRIGHT", -2, 2)
+  dIcoTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  f._dealIconFrame = dIcoFrame
+  f._dealIconTex = dIcoTex
+end
 
 local dealQtyRight = dealCard:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 dealQtyRight:SetPoint("TOPRIGHT", -14, -26)
@@ -1277,9 +1456,53 @@ trackBtn:SetScript("OnEnter", function(self)
 end)
 trackBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+-- Compact Live Telemetry Strip (Session WR/Qty/Gold-per-hr + Active Bait Status)
+do
+  local strip = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  strip:SetPoint("TOPLEFT", execRow, "BOTTOMLEFT", 0, -6)
+  strip:SetPoint("TOPRIGHT", execRow, "BOTTOMRIGHT", 0, -6)
+  strip:SetHeight(20)
+  strip:SetBackdrop(FLAT_BACKDROP)
+  strip:SetBackdropColor(0.035, 0.055, 0.105, 1)
+  strip:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.85)
+
+  local sLeft = strip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  sLeft:SetPoint("LEFT", 8, 0)
+  sLeft:SetJustifyH("LEFT")
+  sLeft:SetText("|cff64748bСессия: ожидание сделок|r")
+
+  local sRight = strip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  sRight:SetPoint("RIGHT", -8, 0)
+  sRight:SetJustifyH("RIGHT")
+  sRight:SetText("|cff64748bНаживка: —|r")
+
+  f._liveStrip = strip
+  f._refreshLiveStrip = function()
+    local sb = state.sessionBuys
+    local buys = (sb and sb.history) and #sb.history or 0
+    local qty = (sb and sb.totalQty) or 0
+    local spent = (sb and sb.totalCopper) or 0
+    if not state.sessionStartedAt then state.sessionStartedAt = GetTime and GetTime() or 0 end
+    if buys > 0 then
+      local dtH = math.max(0.05, ((GetTime and GetTime() or 0) - state.sessionStartedAt) / 3600)
+      local rateTxt = string.format("%.0f шт/ч", qty / dtH)
+      sLeft:SetText(string.format("|cff10b981Сессия:|r |cffffffff%d|r сд. · |cff10b981%d шт|r · %s |cff64748b(%s)|r", buys, qty, FormatCoins(spent), rateTxt))
+    else
+      sLeft:SetText("|cff64748bСессия: ожидание сделок|r")
+    end
+    local bid = ForeverSniperDB and ForeverSniperDB.activeBaitID
+    local bPrice = bid and ForeverSniperDB.baits and ForeverSniperDB.baits[bid]
+    if bid and bPrice and bPrice > 0 then
+      sRight:SetText(string.format("|cfff59e0b★ Наживка:|r %s", FormatCoins(bPrice)))
+    else
+      sRight:SetText("|cff64748bНаживка: не задана|r")
+    end
+  end
+end
+
 local buyBtn = CreateFlatButton("ForeverSniperBuyBtn", f, 500, 46, "Нет активного лота")
-buyBtn:SetPoint("TOPLEFT", execRow, "BOTTOMLEFT", 0, -8)
-buyBtn:SetPoint("TOPRIGHT", execRow, "BOTTOMRIGHT", 0, -8)
+buyBtn:SetPoint("TOPLEFT", f._liveStrip, "BOTTOMLEFT", 0, -6)
+buyBtn:SetPoint("TOPRIGHT", f._liveStrip, "BOTTOMRIGHT", 0, -6)
 buyBtn:RegisterForClicks("LeftButtonDown", "RightButtonUp")
 buyBtn.label:SetFontObject("GameFontNormalLarge")
 buyBtn.label:SetWidth(484)
@@ -1306,7 +1529,10 @@ logFrame:SetMovable(true)
 logFrame:EnableMouse(true)
 logFrame:RegisterForDrag("LeftButton")
 logFrame:SetScript("OnDragStart", logFrame.StartMoving)
-logFrame:SetScript("OnDragStop", logFrame.StopMovingOrSizing)
+logFrame:SetScript("OnDragStop", function(self)
+  self:StopMovingOrSizing()
+  if f._saveModalPos then f._saveModalPos(self, "log") end
+end)
 logFrame:SetBackdrop(FLAT_BACKDROP)
 logFrame:SetBackdropColor(0.043, 0.067, 0.125, 1)
 logFrame:SetBackdropBorderColor(0.22, 0.28, 0.40, 1)
@@ -1337,16 +1563,16 @@ logExportBtn = CreateFlatButton(nil, logFrame, 118, 24, "Экспорт отчё
 logExportBtn:SetPoint("RIGHT", logClearBtn, "LEFT", -6, 0)
 logExportBtn:SetColors({ 0.08, 0.22, 0.36, 1 }, { 0.12, 0.30, 0.48, 1 }, { 0.0, 0.71, 0.85, 0.75 }, { 0.9, 0.97, 1 })
 
-tabSessionBtn = CreateFlatButton(nil, logFrame, 112, 22, "Сессия")
-tabSessionBtn:SetPoint("TOPLEFT", 14, -44)
-tabItemsBtn = CreateFlatButton(nil, logFrame, 112, 22, "По товарам")
-tabItemsBtn:SetPoint("LEFT", tabSessionBtn, "RIGHT", 8, 0)
-tabDaysBtn = CreateFlatButton(nil, logFrame, 112, 22, "По дням")
-tabDaysBtn:SetPoint("LEFT", tabItemsBtn, "RIGHT", 8, 0)
-tabHoursBtn = CreateFlatButton(nil, logFrame, 112, 22, "По часам (24ч)")
-tabHoursBtn:SetPoint("LEFT", tabDaysBtn, "RIGHT", 8, 0)
-f._tabSalesBtn = CreateFlatButton(nil, logFrame, 112, 22, "Продажи")
-f._tabSalesBtn:SetPoint("LEFT", tabHoursBtn, "RIGHT", 8, 0)
+tabSessionBtn = CreateFlatButton(nil, logFrame, 134, 22, "Сессия")
+tabSessionBtn:SetPoint("TOPLEFT", 15, -44)
+tabItemsBtn = CreateFlatButton(nil, logFrame, 134, 22, "По товарам")
+tabItemsBtn:SetPoint("LEFT", tabSessionBtn, "RIGHT", 10, 0)
+tabDaysBtn = CreateFlatButton(nil, logFrame, 134, 22, "По дням")
+tabDaysBtn:SetPoint("LEFT", tabItemsBtn, "RIGHT", 10, 0)
+tabHoursBtn = CreateFlatButton(nil, logFrame, 134, 22, "По часам (24ч)")
+tabHoursBtn:SetPoint("LEFT", tabDaysBtn, "RIGHT", 10, 0)
+f._tabSalesBtn = CreateFlatButton(nil, logFrame, 134, 22, "Продажи")
+f._tabSalesBtn:SetPoint("LEFT", tabHoursBtn, "RIGHT", 10, 0)
 
 -- 3 KPI Summary Cards (Qty, Total Spent, Weighted Avg / Win-Rate)
 local function CreateKpiCard(xOffset, w, labelTxt, accentR, accentG, accentB)
@@ -1504,7 +1730,33 @@ ac5:SetPoint("LEFT", ac4, "RIGHT", 6, 0); ac5:SetWidth(84); ac5:SetJustifyH("RIG
 local ac6 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 ac6:SetPoint("LEFT", ac5, "RIGHT", 6, 0); ac6:SetWidth(64); ac6:SetJustifyH("RIGHT")
 local ac7 = anaColHdr:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-ac7:SetPoint("RIGHT", -20, 0); ac7:SetWidth(98); ac7:SetJustifyH("RIGHT")
+ac7:SetPoint("RIGHT", -10, 0); ac7:SetWidth(98); ac7:SetJustifyH("RIGHT")
+
+-- Clickable sort hitboxes for analytics columns (Items / Sales / Liquidity)
+do
+  local cols = { [2] = ac2, [3] = ac3, [4] = ac4, [5] = ac5, [6] = ac6, [7] = ac7 }
+  for colIdx, fs in pairs(cols) do
+    local hb = CreateFrame("Button", nil, anaColHdr)
+    hb:SetAllPoints(fs)
+    hb:SetScript("OnClick", function()
+      if state.anaSortCol == colIdx then
+        state.anaSortAsc = not state.anaSortAsc
+      else
+        state.anaSortCol = colIdx
+        state.anaSortAsc = false
+      end
+      if RenderLogFrame then RenderLogFrame() end
+    end)
+    hb:SetScript("OnEnter", function(self)
+      if GameTooltip then
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("Клик: сортировать по этой колонке", 0.96, 0.70, 0.03)
+        GameTooltip:Show()
+      end
+    end)
+    hb:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+  end
+end
 
 local anaBox = CreateFrame("Frame", nil, logFrame, "BackdropTemplate")
 anaBox:SetPoint("TOPLEFT", anaColHdr, "BOTTOMLEFT", 0, -2)
@@ -1615,7 +1867,14 @@ local function GetAnaRow(i)
       local avgU = (qty > 0) and math.floor((it.spent or 0) / qty) or 0
       local avgFloor = ((it.scanCnt or 0) > 0) and math.floor((it.scanSum or 0) / it.scanCnt) or 0
       GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-      GameTooltip:AddLine("|cfff59e0b" .. (it.name or iname) .. " — ROI Аналитика|r")
+      GameTooltip:AddLine("|cfff59e0b" .. (it.name or iname) .. " — Аналитика|r")
+      local totD = (it.buys or 0) + (it.missed or 0)
+      local totQ = qty + (it.missedQty or 0)
+      GameTooltip:AddDoubleLine("Выиграно сделок:", string.format("%d / %d (%s)", it.buys or 0, totD, FormatWinRate(it.buys, it.missed)), 0.85, 0.90, 0.96, 1, 1, 1)
+      GameTooltip:AddDoubleLine("Выиграно штук:", string.format("%d / %d шт (%s)", qty, totQ, FormatWinRate(qty, it.missedQty)), 0.85, 0.90, 0.96, 1, 1, 1)
+      if (it.ahErrors or 0) > 0 then
+        GameTooltip:AddDoubleLine("Ошибок АХ (конфликт):", tostring(it.ahErrors), 0.85, 0.90, 0.96, 0.95, 0.65, 0.25)
+      end
       if avgFloor > 0 then
         local netResale = math.floor(avgFloor * 0.95)
         GameTooltip:AddDoubleLine("Ср. мин. АХ (рынок):", FormatCoinsPlain(avgFloor), 0.85, 0.90, 0.96, 0.96, 0.85, 0.45)
@@ -1636,15 +1895,30 @@ local function GetAnaRow(i)
     end)
     row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     row:SetScript("OnMouseUp", function(self, btn)
-      if btn == "LeftButton" and self.liqItemID then
-        ForeverSniperDB.selectedID = self.liqItemID
-        UpdateStatus()
-        SyncInputsFromSelected()
-        return
-      end
-      if btn == "LeftButton" and self.roiItemID then
-        selectedAnaItemID = self.roiItemID
-        RenderLogFrame()
+      if self.liqItemID then
+        if btn == "RightButton" then
+          local rec = ForeverSniperDB.market and ForeverSniperDB.market[self.liqItemID]
+          local floorP = rec and (rec.p2 or rec.p1) or 0
+          if floorP > 0 then
+            local targetP = math.max(1, math.floor(floorP * 0.85))
+            ForeverSniperDB.watchlist = ForeverSniperDB.watchlist or {}
+            ForeverSniperDB.watchlist[self.liqItemID] = targetP
+            ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+            ForeverSniperDB.tracked[self.liqItemID] = true
+            ForeverSniperDB.selectedID = self.liqItemID
+            if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+            if NS.SetScanMode then NS.SetScanMode("sniper") end
+            UpdateStatus()
+            SyncInputsFromSelected()
+            local _, nm = GetItemVisuals(self.liqItemID)
+            print(string.format("|cff10b981Goblin Broker:|r добавлен в Снайпер: %s <= %s (-15%% от пола %s).", nm or self.liqItemID, FormatCoinsPlain(targetP), FormatCoinsPlain(floorP)))
+          end
+          return
+        elseif btn == "LeftButton" then
+          ForeverSniperDB.selectedID = self.liqItemID
+          UpdateStatus()
+          SyncInputsFromSelected()
+        end
       end
     end)
     row.barFill = row:CreateTexture(nil, "BACKGROUND", nil, 2)
@@ -1716,8 +1990,24 @@ RenderLogFrame = function()
           totMatchedProfit = totMatchedProfit + ((it.net or 0) - cost)
         end
       end
+      local sCol = state.anaSortCol
+      local sAsc = not not state.anaSortAsc
       table.sort(skeys, function(a, b)
-        return (s.byItem[a].net or 0) > (s.byItem[b].net or 0)
+        local ia, ib = s.byItem[a], s.byItem[b]
+        local va, vb
+        if sCol == 2 then va, vb = ia.qty or 0, ib.qty or 0
+        elseif sCol == 3 then va, vb = buyAvgByName[ia.name or a] or 0, buyAvgByName[ib.name or b] or 0
+        elseif sCol == 4 then va, vb = ((ia.qty or 0) > 0) and ((ia.net or 0) / ia.qty) or 0, ((ib.qty or 0) > 0) and ((ib.net or 0) / ib.qty) or 0
+        elseif sCol == 6 or sCol == 7 then
+          local ca = (buyAvgByName[ia.name or a] or 0) * (ia.qty or 0)
+          local cb = (buyAvgByName[ib.name or b] or 0) * (ib.qty or 0)
+          local pa = ca > 0 and ((ia.net or 0) - ca) or -1e12
+          local pb = cb > 0 and ((ib.net or 0) - cb) or -1e12
+          va = (sCol == 6) and (ca > 0 and (pa / ca) or -999) or pa
+          vb = (sCol == 6) and (cb > 0 and (pb / cb) or -999) or pb
+        else va, vb = ia.net or 0, ib.net or 0 end
+        if va ~= vb then return sAsc and (va < vb) or (va > vb) end
+        return (ia.net or 0) > (ib.net or 0)
       end)
 
       if totMatchedCost > 0 then
@@ -1805,7 +2095,7 @@ RenderLogFrame = function()
     end
     anaEmpty:SetText("|cff64748bСтатистика пока не накоплена|r")
     local t = EnsureTelemetryDB()
-    local totBuys, totQty, totSpent, totSaved, totMissed, totDips, totMktSaved = 0, 0, 0, 0, 0, 0, 0
+    local totBuys, totQty, totSpent, totSaved, totMissed, totMissedQty, totDips, totMktSaved = 0, 0, 0, 0, 0, 0, 0, 0
     for _, d in pairs(t.days or {}) do
       totBuys = totBuys + (d.buys or 0)
       totQty = totQty + (d.qty or 0)
@@ -1813,6 +2103,7 @@ RenderLogFrame = function()
       totSaved = totSaved + (d.saved or 0)
       totMktSaved = totMktSaved + (d.mktSaved or 0)
       totMissed = totMissed + (d.missed or 0)
+      totMissedQty = totMissedQty + (d.missedQty or 0)
       totDips = totDips + (d.dips or 0)
     end
     local computedMktSaved, totNetProfit = 0, 0
@@ -1846,21 +2137,46 @@ RenderLogFrame = function()
     end
     kpiSpentCard.lbl:SetText("|cff94a3b8КУПЛЕНО · ПОТРАЧЕНО|r")
     kpiSpentCard.val:SetText(string.format("|cffffffff%d шт|r |cff64748b·|r %s", totQty, totSpent > 0 and FormatCoins(totSpent) or ("0" .. ICON_COPPER)))
-    kpiAvgCard.lbl:SetText("|cff94a3b8WIN-RATE / СРЫВЫ|r")
-    kpiAvgCard.val:SetText(string.format("%s |cff64748b(%d / %d)|r", FormatWinRate(totBuys, totMissed), totBuys, totMissed))
+    kpiAvgCard.lbl:SetText("|cff94a3b8WIN-RATE: СДЕЛКИ / ШТУКИ|r")
+    kpiAvgCard.val:SetText(string.format("%s |cff64748b(%d/%d)|r · %s |cff64748b(%d/%d шт)|r",
+      FormatWinRate(totBuys, totMissed), totBuys, totBuys + totMissed,
+      FormatWinRate(totQty, totMissedQty), totQty, totQty + totMissedQty))
 
     for _, r in ipairs(anaRows) do r:Hide() end
     local y = 0
     if logTab == "items" then
-      ac1:SetText("|cff94a3b8Предмет|r"); ac2:SetText("|cff94a3b8Куплено|r"); ac3:SetText("|cff94a3b8Срывы / WR|r")
+      ac1:SetText("|cff94a3b8Предмет|r"); ac2:SetText("|cff94a3b8Куплено|r"); ac3:SetText("|cff94a3b8Выиграно / WR|r")
       ac4:SetText("|cff94a3b8Ср. мин. АХ|r"); ac5:SetText("|cff94a3b8Ср. покупка|r")
       ac6:SetText("|cff94a3b8ROI (-5%)|r"); ac6:Show()
       ac7:SetText("|cff94a3b8Чист. прибыль|r"); ac7:Show()
       local keys = {}
       for id in pairs(t.items or {}) do table.insert(keys, id) end
+      local iCol = state.anaSortCol
+      local iAsc = not not state.anaSortAsc
       table.sort(keys, function(a, b)
         local ia, ib = t.items[a], t.items[b]
-        if (ia.spent or 0) ~= (ib.spent or 0) then return (ia.spent or 0) > (ib.spent or 0) end
+        local va, vb
+        if iCol == 2 then va, vb = ia.qty or 0, ib.qty or 0
+        elseif iCol == 3 then
+          local ta, tb = (ia.buys or 0) + (ia.missed or 0), (ib.buys or 0) + (ib.missed or 0)
+          va, vb = ta > 0 and ((ia.buys or 0) / ta) or 0, tb > 0 and ((ib.buys or 0) / tb) or 0
+        elseif iCol == 4 then
+          va = ((ia.scanCnt or 0) > 0) and ((ia.scanSum or 0) / ia.scanCnt) or 0
+          vb = ((ib.scanCnt or 0) > 0) and ((ib.scanSum or 0) / ib.scanCnt) or 0
+        elseif iCol == 5 then
+          va = ((ia.qty or 0) > 0) and ((ia.spent or 0) / ia.qty) or 0
+          vb = ((ib.qty or 0) > 0) and ((ib.spent or 0) / ib.qty) or 0
+        elseif iCol == 6 or iCol == 7 then
+          local fa = ((ia.scanCnt or 0) > 0) and math.floor((ia.scanSum or 0) / ia.scanCnt) or 0
+          local fb = ((ib.scanCnt or 0) > 0) and math.floor((ib.scanSum or 0) / ib.scanCnt) or 0
+          local pa = (fa > 0 and (ia.qty or 0) > 0) and (math.floor(fa * 0.95) * ia.qty - (ia.spent or 0)) or -1e12
+          local pb = (fb > 0 and (ib.qty or 0) > 0) and (math.floor(fb * 0.95) * ib.qty - (ib.spent or 0)) or -1e12
+          va = (iCol == 6) and ((ia.spent or 0) > 0 and (pa / ia.spent) or -999) or pa
+          vb = (iCol == 6) and ((ib.spent or 0) > 0 and (pb / ib.spent) or -999) or pb
+        else
+          va, vb = ia.spent or 0, ib.spent or 0
+        end
+        if va ~= vb then return iAsc and (va < vb) or (va > vb) end
         return (ia.scanCnt or 0) > (ib.scanCnt or 0)
       end)
       for i, id in ipairs(keys) do
@@ -1880,7 +2196,7 @@ RenderLogFrame = function()
         row.c1:ClearAllPoints(); row.c1:SetPoint("LEFT", row.ico, "RIGHT", 6, 0); row.c1:SetWidth(128)
         row.c1:SetText(it.name or nm); row.c1:SetTextColor(r, g, b)
         row.c2:SetText(string.format("|cffffffff%d шт|r |cff64748b(%d)|r", qty, it.buys or 0))
-        row.c3:SetText(string.format("|cff64748b%d /|r %s", it.missed or 0, FormatWinRate(it.buys, it.missed)))
+        row.c3:SetText(string.format("|cffcbd5e1%d/%d|r %s", it.buys or 0, (it.buys or 0) + (it.missed or 0), FormatWinRate(it.buys, it.missed)))
         row.c4:SetText(avgFloor > 0 and FormatCoins(avgFloor) or "|cff64748b—|r")
         row.c5:SetText(avgU > 0 and FormatCoins(avgU) or (it.minDip and FormatCoins(it.minDip) or "|cff64748b—|r"))
         row.c6:Show(); row.c7:Show()
@@ -2108,15 +2424,30 @@ RenderLogFrame = function()
       end)
       row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
     row:SetScript("OnMouseUp", function(self, btn)
-      if btn == "LeftButton" and self.liqItemID then
-        ForeverSniperDB.selectedID = self.liqItemID
-        UpdateStatus()
-        SyncInputsFromSelected()
-        return
-      end
-      if btn == "LeftButton" and self.roiItemID then
-        selectedAnaItemID = self.roiItemID
-        RenderLogFrame()
+      if self.liqItemID then
+        if btn == "RightButton" then
+          local rec = ForeverSniperDB.market and ForeverSniperDB.market[self.liqItemID]
+          local floorP = rec and (rec.p2 or rec.p1) or 0
+          if floorP > 0 then
+            local targetP = math.max(1, math.floor(floorP * 0.85))
+            ForeverSniperDB.watchlist = ForeverSniperDB.watchlist or {}
+            ForeverSniperDB.watchlist[self.liqItemID] = targetP
+            ForeverSniperDB.tracked = ForeverSniperDB.tracked or {}
+            ForeverSniperDB.tracked[self.liqItemID] = true
+            ForeverSniperDB.selectedID = self.liqItemID
+            if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+            if NS.SetScanMode then NS.SetScanMode("sniper") end
+            UpdateStatus()
+            SyncInputsFromSelected()
+            local _, nm = GetItemVisuals(self.liqItemID)
+            print(string.format("|cff10b981Goblin Broker:|r добавлен в Снайпер: %s <= %s (-15%% от пола %s).", nm or self.liqItemID, FormatCoinsPlain(targetP), FormatCoinsPlain(floorP)))
+          end
+          return
+        elseif btn == "LeftButton" then
+          ForeverSniperDB.selectedID = self.liqItemID
+          UpdateStatus()
+          SyncInputsFromSelected()
+        end
       end
     end)
 
@@ -2182,9 +2513,10 @@ local function RefreshSessionBar()
       logBadgeCount:Show()
     end
   else
-    logBtn.railText:SetText("Лог (0)")
+    logBtn.railText:SetText("Аналитика (0)")
     logBadgeCount:Hide()
   end
+  if f._refreshLiveStrip then f._refreshLiveStrip() end
   if logFrame:IsShown() then
     RenderLogFrame()
   end
@@ -2207,7 +2539,7 @@ local function RecordCompletedPurchase(att)
   local mktSaved = (avgFloor > 0) and math.max(0, (avgFloor * qty) - total) or 0
   sb.totalMktSaved = (sb.totalMktSaved or 0) + mktSaved
   RecordTelemetryBuy(att.itemID, qty, total, att.name, saved, mktSaved)
-  sb.lastOutcome = string.format(DOT_GREEN .. " |cff10b981Куплено:|r x%d по %s/шт (%s)", qty, FormatCoinsPlain(unitAvg), FormatCoinsPlain(total))
+  sb.lastOutcome = string.format(DOT_GREEN .. " |cff10b981Куплено:|r x%d по %s/шт (%s)", qty, FormatCoins(unitAvg), FormatCoins(total))
   RefreshSessionBar()
 
   -- Track bought count separately from base qtyLimits so preset dirty-state is unaffected
@@ -2303,7 +2635,7 @@ do
         local cut = tonumber(consignment) or 0
         local net = (gross > 0) and math.max(0, gross - cut) or (tonumber(money) or 0)
         if gross == 0 and net > 0 then gross = net + cut end
-        local dayBucket = math.floor((tonumber(daysLeft) or 30) * 24)
+        local dayBucket = math.floor(tonumber(daysLeft) or 30)
         local sig = string.format("%s|%s|%d|%d|%d", itemName, playerName or "", qty, gross, dayBucket)
         occCounts[sig] = (occCounts[sig] or 0) + 1
         local uniqKey = sig .. "#" .. occCounts[sig]
@@ -2421,11 +2753,22 @@ logExportBtn:SetScript("OnClick", function()
         it.name or "", it.qty or 0, it.deals or 0, it.gross or 0, it.cut or 0, it.net or 0))
     end
   end
+  if f._exportEventLogLines then f._exportEventLogLines(lines) end
   OpenExportModal("Экспорт аналитики", table.concat(lines, "\n"))
   print("|cff06b6d4Goblin Broker:|r экспорт аналитики готов — скопируйте Ctrl+C.")
 end)
 
-logClearBtn:SetScript("OnClick", function()
+logClearBtn:SetScript("OnClick", function(self)
+  local now = GetTime and GetTime() or 0
+  if self._armTab ~= logTab or (now - (self._armAt or 0)) > 3.5 then
+    self._armTab = logTab
+    self._armAt = now
+    self:SetLabel("Точно сбросить?")
+    self:SetColors({ 0.65, 0.12, 0.16, 1 }, { 0.80, 0.16, 0.22, 1 }, { 0.96, 0.30, 0.36, 1 }, { 1, 1, 1 })
+    return
+  end
+  self._armTab = nil
+  self:SetColors({ 0.28, 0.10, 0.13, 1 }, { 0.45, 0.14, 0.18, 1 }, { 0.65, 0.22, 0.28, 0.85 }, { 1, 0.86, 0.88 })
   if logTab == "session" then
     ClearSessionHistory()
   elseif logTab == "liquidity" then
@@ -2447,6 +2790,8 @@ logBtn:SetScript("OnClick", function()
   if logFrame:IsShown() then
     logFrame:Hide()
   else
+    if f._closePopovers then f._closePopovers() end
+    if f._restoreModalPos then f._restoreModalPos(logFrame, "log") end
     RenderLogFrame()
     logFrame:Show()
   end
@@ -2489,11 +2834,15 @@ local buyHotkeySuffixCache = ""
 local function RefreshBuyHotkeyCache()
   if not GetBindingKey then
     buyHotkeySuffixCache = ""
+    state.buyBindKey1 = nil
+    state.buyBindKey2 = nil
     return
   end
-  local key = GetBindingKey("FOREVERSNIPER_BUY")
-  if key and key ~= "" then
-    buyHotkeySuffixCache = "  |cfffef08a[" .. key .. "]|r"
+  local k1, k2 = GetBindingKey("FOREVERSNIPER_BUY")
+  state.buyBindKey1 = (k1 and k1 ~= "") and k1 or nil
+  state.buyBindKey2 = (k2 and k2 ~= "") and k2 or nil
+  if state.buyBindKey1 then
+    buyHotkeySuffixCache = "  |cfffef08a[" .. state.buyBindKey1 .. "]|r"
   else
     buyHotkeySuffixCache = ""
   end
@@ -2505,15 +2854,24 @@ end
 
 local function ApplyRailState()
   local expanded = not not ForeverSniperDB.railExpanded
-  toolRail:SetWidth(expanded and 134 or 36)
-  f:SetWidth(expanded and 670 or 572)
+  local isMini = not not ForeverSniperDB.miniMode
+  -- Stationary Overlay Drawer: main window stays rock-solid 572px, Buy CTA never jumps!
+  f:SetWidth(572)
+  toolRail:SetWidth(expanded and 148 or 36)
+  toolRail:SetFrameLevel((f:GetFrameLevel() or 1) + (expanded and 20 or 2))
+  if expanded then
+    toolRail:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.65)
+    railDrawerShadow:Show()
+  else
+    toolRail:SetBackdropBorderColor(0.15, 0.21, 0.32, 1)
+    railDrawerShadow:Hide()
+  end
   railToggleBtn:SetLabel(expanded and "<< Свернуть" or ">>")
   for _, btn in ipairs(railButtons) do
-    if expanded then
-      btn.railText:Show()
-    else
-      btn.railText:Hide()
-    end
+    if expanded then btn.railText:Show() else btn.railText:Hide() end
+  end
+  for _, lbl in ipairs(railGroupLabels) do
+    if expanded and not isMini then lbl:Show() else lbl:Hide() end
   end
   RefreshSessionBar()
 end
@@ -2530,25 +2888,57 @@ local function ApplyMiniMode()
     presetBar:Hide()
     cfgCard:Hide()
     railDiv:Hide()
+    if f._railSysDiv then f._railSysDiv:Hide() end
     importBtn:Hide()
     if f._baitBtn then f._baitBtn:Hide() end
     if f._skip1Btn then f._skip1Btn:Hide() end
+    logBtn:ClearAllPoints()
+    if f._modeBtn then
+      f._modeBtn:ClearAllPoints()
+      f._modeBtn:SetPoint("TOPLEFT", railToggleBtn, "BOTTOMLEFT", 0, -5)
+      f._modeBtn:SetPoint("TOPRIGHT", railToggleBtn, "BOTTOMRIGHT", 0, -5)
+      logBtn:SetPoint("TOPLEFT", f._modeBtn, "BOTTOMLEFT", 0, -5)
+      logBtn:SetPoint("TOPRIGHT", f._modeBtn, "BOTTOMRIGHT", 0, -5)
+    else
+      logBtn:SetPoint("TOPLEFT", railToggleBtn, "BOTTOMLEFT", 0, -6)
+      logBtn:SetPoint("TOPRIGHT", railToggleBtn, "BOTTOMRIGHT", 0, -6)
+    end
     wlBox:Hide()
-    if f.presetMenu then f.presetMenu:Hide() end
+    if f._radarBox then f._radarBox:Hide() end
+    if f._closePopovers then f._closePopovers() end
     dealCard:ClearAllPoints()
-    dealCard:SetPoint("TOPLEFT", toolRail, "TOPRIGHT", 10, -18)
+    dealCard:SetPoint("TOPLEFT", f, "TOPLEFT", 60, -78)
     dealCard:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -78)
+    f.miniContextText:ClearAllPoints()
+    f.miniContextText:SetPoint("TOPLEFT", f, "TOPLEFT", 60, -60)
+    f.miniContextText:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -60)
     f.miniContextText:Show()
-    f:SetHeight(262)
+    f:SetHeight(284)
     miniBtn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.8 }, { 0.85, 1, 0.94 })
     miniBtn.railText:SetText("|cff10b981Полный вид|r")
   else
     presetBar:Show()
     railDiv:Show()
+    if f._railSysDiv then f._railSysDiv:Show() end
     importBtn:Show()
     if f._baitBtn then f._baitBtn:Show() end
     if f._skip1Btn then f._skip1Btn:Show() end
-    wlBox:Show()
+    if f._modeBtn then
+      f._modeBtn:ClearAllPoints()
+      f._modeBtn:SetPoint("TOPLEFT", railToggleBtn, "BOTTOMLEFT", 0, -22)
+      f._modeBtn:SetPoint("TOPRIGHT", railToggleBtn, "BOTTOMRIGHT", 0, -22)
+    end
+    logBtn:ClearAllPoints()
+    logBtn:SetPoint("TOPLEFT", f._skip1Btn, "BOTTOMLEFT", 0, -26)
+    logBtn:SetPoint("TOPRIGHT", f._skip1Btn, "BOTTOMRIGHT", 0, -26)
+    if state.scanMode == "scanner" and f._radarBox then
+      wlBox:Hide()
+      f._radarBox:Show()
+      if NS.RenderInlineRadar then NS.RenderInlineRadar() end
+    else
+      if f._radarBox then f._radarBox:Hide() end
+      wlBox:Show()
+    end
     SetCfgOpen(isCfgOpen)
     f.miniContextText:Hide()
     dealCard:ClearAllPoints()
@@ -2565,43 +2955,113 @@ miniBtn:SetScript("OnClick", function()
   ApplyMiniMode()
 end)
 
-local function RefreshBuyButtonText()
-  local deal = state.pendingDeal
-  if not deal then
-    buyBtn:SetLabel("Нет активного лота" .. GetBuyHotkeySuffix())
-    buyBtn:SetColors({ 0.11, 0.15, 0.22, 1 }, { 0.11, 0.15, 0.22, 1 }, { 0.20, 0.27, 0.38, 1 }, { 0.72, 0.78, 0.88 })
-    buyBtn:SetFlatEnabled(false)
-    return
+local RefreshBuyButtonText
+do
+  local COL_IDLE_BG = { 0.11, 0.15, 0.22, 1 }
+  local COL_IDLE_BD = { 0.20, 0.27, 0.38, 1 }
+  local COL_IDLE_TX = { 0.72, 0.78, 0.88 }
+  local COL_CONF_BG = { 0.68, 0.40, 0.03, 1 }
+  local COL_CONF_HV = { 0.85, 0.50, 0.04, 1 }
+  local COL_CONF_BD = { 0.96, 0.62, 0.04, 1 }
+  local COL_READY_BG = { 0.02, 0.48, 0.34, 1 }
+  local COL_READY_HV = { 0.04, 0.62, 0.44, 1 }
+  local COL_READY_BD = { 0.06, 0.73, 0.51, 0.95 }
+  local COL_QRDY_BG  = { 0.02, 0.52, 0.56, 1 }
+  local COL_QRDY_HV  = { 0.04, 0.66, 0.70, 1 }
+  local COL_QRDY_BD  = { 0.06, 0.88, 0.82, 1 }
+  local COL_ERR_BG   = { 0.46, 0.10, 0.14, 1 }
+  local COL_ERR_BD   = { 0.95, 0.25, 0.35, 0.95 }
+  local COL_WHITE    = { 1, 1, 1 }
+
+  f._updateConfirmCountdown = function(rem)
+    local deal = state.pendingDeal
+    if not deal or deal.stage ~= "confirm" then return end
+    local qty = deal.chosenQty or deal.qty or 1
+    local cost = deal.quotedTotal or (deal.exactCostForQty and deal.exactCostForQty(qty)) or ((deal.unitPrice or 0) * qty)
+    local prefix = deal.quoteReady and "ПОДТВЕРДИТЬ СЕЙЧАС" or "ПОДТВЕРДИТЬ"
+    buyBtn:SetLabel(string.format("%s x%d (%dс) | %s%s", prefix, qty, rem, FormatCoins(cost), GetBuyHotkeySuffix()))
   end
 
-  local cap = GetQtyCap(deal.itemID)
-  local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
-  local chosenQty = math.max(1, effectiveMax)
-  local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
-  local hk = GetBuyHotkeySuffix()
-
-  if deal.stage == "confirm" then
+  f._flashQuoteReady = function()
+    local deal = state.pendingDeal
+    if not deal or deal.stage ~= "confirm" or not deal.quoteReady then return end
+    local qty = deal.chosenQty or deal.qty or 1
+    local cost = deal.quotedTotal or (deal.exactCostForQty and deal.exactCostForQty(qty)) or ((deal.unitPrice or 0) * qty)
     local rem = math.max(0, math.ceil(10 - (GetTime() - (deal.confirmAt or GetTime()))))
-    buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ x%d (%dс) | %s%s", chosenQty, rem, FormatCoinsPlain(totalCost), hk))
-    buyBtn:SetColors({ 0.68, 0.40, 0.03, 1 }, { 0.85, 0.50, 0.04, 1 }, { 0.96, 0.62, 0.04, 1 }, { 1, 1, 1 })
-    dealStripe:SetColorTexture(0.96, 0.62, 0.04, 1)
-    dealCard:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.8)
-    dealBadge:SetText("|cfff59e0bПОДТВЕРЖДЕНИЕ (ПКМ — отмена)|r")
-  else
-    buyBtn:SetLabel(string.format("КУПИТЬ x%d  |  %s%s", chosenQty, FormatCoinsPlain(totalCost), hk))
-    buyBtn:SetColors({ 0.02, 0.48, 0.34, 1 }, { 0.04, 0.62, 0.44, 1 }, { 0.06, 0.73, 0.51, 0.95 }, { 1, 1, 1 })
-    dealStripe:SetColorTexture(0.06, 0.73, 0.51, 1)
-    dealCard:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.75)
-    dealBadge:SetText("|cff10b981НАЙДЕН ВЫГОДНЫЙ ЛОТ|r")
+    buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ СЕЙЧАС x%d (%dс) | %s%s", qty, rem, FormatCoins(cost), GetBuyHotkeySuffix()))
+    buyBtn:SetColors(COL_QRDY_BG, COL_QRDY_HV, COL_QRDY_BD, COL_WHITE)
+    dealStripe:SetColorTexture(0.06, 0.88, 0.82, 1)
+    dealCard:SetBackdropBorderColor(0.06, 0.88, 0.82, 0.95)
+    dealBadge:SetText(DOT_GREEN .. " |cff2dd4bfБРОНЬ ГОТОВА — ЖМИТЕ ПОДТВЕРДИТЬ!|r")
   end
-  buyBtn:SetFlatEnabled(true)
 
-  local avgUnit = math.floor(totalCost / math.max(1, chosenQty))
-  local avgText = (avgUnit > (deal.unitPrice or 0))
-    and string.format("  |cff94a3b8(ср ~%s)|r", FormatCoins(avgUnit))
-    or ""
-  dealMeta:SetText(string.format("|cff94a3b8Цена:|r %s|cff94a3b8/шт|r%s", FormatCoins(deal.unitPrice), avgText))
-  dealTotalRight:SetText(string.format("|cfff59e0bИтого:|r %s", FormatCoins(totalCost)))
+  RefreshBuyButtonText = function()
+    local deal = state.pendingDeal
+    if not deal then
+      if state.scanMode == "scanner" then
+        buyBtn:SetLabel("Экспорт таблицы Ликвидности (Ctrl+C)")
+        buyBtn:SetColors(COL_QRDY_BG, COL_QRDY_HV, COL_QRDY_BD, COL_WHITE)
+        buyBtn:SetFlatEnabled(true)
+        return
+      end
+      local hint = state.buyBindKey1 and GetBuyHotkeySuffix() or "  |cfff59e0b[Назначьте клавишу]|r"
+      buyBtn:SetLabel("Нет активного лота" .. hint)
+      buyBtn:SetColors(COL_IDLE_BG, COL_IDLE_BG, COL_IDLE_BD, COL_IDLE_TX)
+      buyBtn:SetFlatEnabled(false)
+      return
+    end
+
+    local cap = GetQtyCap(deal.itemID)
+    local effectiveMax = (cap > 0) and math.min(deal.qty or 1, cap) or (deal.qty or 1)
+    local chosenQty = (deal.chosenQty ~= nil) and deal.chosenQty or math.max(1, effectiveMax)
+    local hk = GetBuyHotkeySuffix()
+
+    if chosenQty < 1 then
+      local need = deal.unitPrice or 0
+      buyBtn:SetLabel("НЕ ХВАТАЕТ ЗОЛОТА (нужно " .. FormatCoins(need) .. ")")
+      buyBtn:SetColors(COL_ERR_BG, COL_ERR_BG, COL_ERR_BD, COL_WHITE)
+      buyBtn:SetFlatEnabled(false)
+      dealStripe:SetColorTexture(0.95, 0.25, 0.35, 1)
+      dealCard:SetBackdropBorderColor(0.95, 0.25, 0.35, 0.9)
+      dealBadge:SetText(DOT_RED .. " |cfff43f5eНЕДОСТАТОЧНО ЗОЛОТА ДЛЯ ВЫКУПА|r")
+      dealMeta:SetText(string.format("|cff94a3b8Цена:|r %s|cff94a3b8/шт|r", FormatCoins(need)))
+      dealTotalRight:SetText("")
+      return
+    end
+
+    local totalCost = deal.quotedTotal or (deal.exactCostForQty and deal.exactCostForQty(chosenQty)) or ((deal.unitPrice or 0) * chosenQty)
+
+    if deal.stage == "confirm" then
+      local rem = math.max(0, math.ceil(10 - (GetTime() - (deal.confirmAt or GetTime()))))
+      if deal.quoteReady then
+        buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ СЕЙЧАС x%d (%dс) | %s%s", chosenQty, rem, FormatCoins(totalCost), hk))
+        buyBtn:SetColors(COL_QRDY_BG, COL_QRDY_HV, COL_QRDY_BD, COL_WHITE)
+        dealStripe:SetColorTexture(0.06, 0.88, 0.82, 1)
+        dealCard:SetBackdropBorderColor(0.06, 0.88, 0.82, 0.95)
+        dealBadge:SetText(DOT_GREEN .. " |cff2dd4bfБРОНЬ ГОТОВА — ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+      else
+        buyBtn:SetLabel(string.format("ПОДТВЕРДИТЬ x%d (%dс) | %s%s", chosenQty, rem, FormatCoins(totalCost), hk))
+        buyBtn:SetColors(COL_CONF_BG, COL_CONF_HV, COL_CONF_BD, COL_WHITE)
+        dealStripe:SetColorTexture(0.96, 0.62, 0.04, 1)
+        dealCard:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.8)
+        dealBadge:SetText("|cfff59e0bПОДТВЕРЖДЕНИЕ (ПКМ — отмена)|r")
+      end
+    else
+      buyBtn:SetLabel(string.format("КУПИТЬ x%d  |  %s%s", chosenQty, FormatCoins(totalCost), hk))
+      buyBtn:SetColors(COL_READY_BG, COL_READY_HV, COL_READY_BD, COL_WHITE)
+      dealStripe:SetColorTexture(0.06, 0.73, 0.51, 1)
+      dealCard:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.75)
+      dealBadge:SetText("|cff10b981НАЙДЕН ВЫГОДНЫЙ ЛОТ|r")
+    end
+    buyBtn:SetFlatEnabled(true)
+
+    local avgUnit = math.floor(totalCost / math.max(1, chosenQty))
+    local avgText = (avgUnit > (deal.unitPrice or 0))
+      and string.format("  |cff94a3b8(ср ~%s)|r", FormatCoins(avgUnit))
+      or ""
+    dealMeta:SetText(string.format("|cff94a3b8Цена:|r %s|cff94a3b8/шт|r%s", FormatCoins(deal.unitPrice), avgText))
+    dealTotalRight:SetText(string.format("|cfff59e0bИтого:|r %s", FormatCoins(totalCost)))
+  end
 end
 
 local function SyncInputsFromSelected()
@@ -2625,6 +3085,8 @@ end
 
 local function RenderWatchlist()
   if ForeverSniperDB.miniMode or not f:IsShown() then return end
+  state.wlRowByItem = state.wlRowByItem or {}
+  for k in pairs(state.wlRowByItem) do state.wlRowByItem[k] = nil end
   for _, row in ipairs(wlRows) do
     row:Hide()
   end
@@ -2683,18 +3145,64 @@ local function RenderWatchlist()
 
       row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.name:SetPoint("LEFT", row.ico, "RIGHT", 6, 0)
-      row.name:SetWidth(132)
+      row.name:SetWidth(122)
       row.name:SetJustifyH("LEFT")
       row.name:SetWordWrap(false)
 
+      local function NudgeRowLimit(btnSelf, dir)
+        local id = btnSelf:GetParent().itemID
+        local cur = id and ForeverSniperDB.watchlist and ForeverSniperDB.watchlist[id]
+        if not cur or cur <= 0 then return end
+        local ap = ForeverSniperDB.activePreset
+        local presetBase = (ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap] and ForeverSniperDB.presets[ap].watchlist) and ForeverSniperDB.presets[ap].watchlist[id] or nil
+        local refPrice = (presetBase and presetBase > 0) and presetBase or cur
+        local pct = (IsShiftKeyDown and IsShiftKeyDown()) and 0.01 or 0.05
+        local step = math.max(1, math.floor(refPrice * pct + 0.5))
+        local nxt = math.max(1, cur + dir * step)
+        ForeverSniperDB.watchlist[id] = nxt
+        if SyncActivePresetSnapshot then SyncActivePresetSnapshot() end
+        ClearPendingDeal()
+        SyncInputsFromSelected()
+        RenderWatchlist()
+      end
+      row.nudgeDown = CreateFlatButton(nil, row, 15, 18, "-")
+      row.nudgeDown:SetPoint("LEFT", row.name, "RIGHT", 2, 0)
+      row.nudgeDown:SetColors({ 0.12, 0.15, 0.22, 1 }, { 0.36, 0.14, 0.18, 1 }, { 0.22, 0.28, 0.40, 0.8 }, { 0.90, 0.94, 0.98 })
+      row.nudgeDown:SetScript("OnClick", function(s) NudgeRowLimit(s, -1) end)
+      row.nudgeDown:HookScript("OnEnter", function(self)
+        if GameTooltip then
+          GameTooltip:SetOwner(self, "ANCHOR_TOP")
+          GameTooltip:AddLine("Снизить лимит цены", 0.96, 0.70, 0.03)
+          GameTooltip:AddLine("ЛКМ: -5% от лимита  |  Shift+ЛКМ: -1%", 0.85, 0.90, 0.96)
+          GameTooltip:Show()
+        end
+      end)
+      row.nudgeDown:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+      row.nudgeDown:Hide()
+
       row.price = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.price:SetPoint("LEFT", row.name, "RIGHT", 4, 0)
-      row.price:SetWidth(84)
-      row.price:SetJustifyH("LEFT")
+      row.price:SetPoint("LEFT", row.nudgeDown, "RIGHT", 2, 0)
+      row.price:SetWidth(72)
+      row.price:SetJustifyH("CENTER")
       row.price:SetWordWrap(false)
 
+      row.nudgeUp = CreateFlatButton(nil, row, 15, 18, "+")
+      row.nudgeUp:SetPoint("LEFT", row.price, "RIGHT", 2, 0)
+      row.nudgeUp:SetColors({ 0.12, 0.15, 0.22, 1 }, { 0.06, 0.34, 0.24, 1 }, { 0.22, 0.28, 0.40, 0.8 }, { 0.90, 0.94, 0.98 })
+      row.nudgeUp:SetScript("OnClick", function(s) NudgeRowLimit(s, 1) end)
+      row.nudgeUp:HookScript("OnEnter", function(self)
+        if GameTooltip then
+          GameTooltip:SetOwner(self, "ANCHOR_TOP")
+          GameTooltip:AddLine("Повысить лимит цены", 0.06, 0.85, 0.55)
+          GameTooltip:AddLine("ЛКМ: +5% от лимита  |  Shift+ЛКМ: +1%", 0.85, 0.90, 0.96)
+          GameTooltip:Show()
+        end
+      end)
+      row.nudgeUp:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+      row.nudgeUp:Hide()
+
       row.live = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.live:SetPoint("LEFT", row.price, "RIGHT", 4, 0)
+      row.live:SetPoint("LEFT", row.nudgeUp, "RIGHT", 14, 0)
       row.live:SetJustifyH("LEFT")
       row.live:SetWordWrap(false)
 
@@ -2770,18 +3278,6 @@ local function RenderWatchlist()
         GameTooltip:Show()
       end)
       row:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-    row:SetScript("OnMouseUp", function(self, btn)
-      if btn == "LeftButton" and self.liqItemID then
-        ForeverSniperDB.selectedID = self.liqItemID
-        UpdateStatus()
-        SyncInputsFromSelected()
-        return
-      end
-      if btn == "LeftButton" and self.roiItemID then
-        selectedAnaItemID = self.roiItemID
-        RenderLogFrame()
-      end
-    end)
 
       local function OpenRowEdit(self)
         local id = self.itemID
@@ -2821,9 +3317,24 @@ local function RenderWatchlist()
     local isSel = (itemID == ForeverSniperDB.selectedID)
     local isTracked = IsItemTracked(itemID)
     local lim = ForeverSniperDB.watchlist[itemID] or 0
-    local cap = GetQtyCap(itemID)
+    local ap = ForeverSniperDB.activePreset
+    local apData = ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap]
+    local baseCap = GetBaseQtyCap(itemID)
+    local remCap = GetQtyCap(itemID)
+    local diffKind, diffOldPrice, diffOldQty = nil, nil, nil
+    if apData and apData.watchlist then
+      local prePrice = apData.watchlist[itemID]
+      local preQty = (apData.qtyLimits and apData.qtyLimits[itemID]) or 0
+      if not prePrice then
+        diffKind = "new"
+      elseif prePrice ~= lim or preQty ~= baseCap then
+        diffKind = "mod"
+        diffOldPrice = prePrice
+        diffOldQty = preQty
+      end
+    end
 
-    row.dealRef = h
+    state.wlRowByItem[itemID] = row
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", 0, -y)
     row:SetWidth(rowW)
@@ -2853,22 +3364,6 @@ local function RenderWatchlist()
     row.name:SetText(nm)
     row.name:SetTextColor(r, g, b)
     row.name:SetAlpha(isTracked and 1 or 0.5)
-    local ap = ForeverSniperDB.activePreset
-    local apData = ap and ForeverSniperDB.presets and ForeverSniperDB.presets[ap]
-    local baseCap = GetBaseQtyCap(itemID)
-    local remCap = GetQtyCap(itemID)
-    local diffKind, diffOldPrice, diffOldQty = nil, nil, nil
-    if apData and apData.watchlist then
-      local prePrice = apData.watchlist[itemID]
-      local preQty = (apData.qtyLimits and apData.qtyLimits[itemID]) or 0
-      if not prePrice then
-        diffKind = "new"
-      elseif prePrice ~= lim or preQty ~= baseCap then
-        diffKind = "mod"
-        diffOldPrice = prePrice
-        diffOldQty = preQty
-      end
-    end
 
     if diffKind == "new" then
       row.price:SetText(FormatCoins(lim) .. " |cff06b6d4+|r")
@@ -2878,12 +3373,15 @@ local function RenderWatchlist()
       row.price:SetText(FormatCoins(lim))
     end
     row.price:SetAlpha(isTracked and 1 or 0.5)
+    if row.nudgeDown and row.nudgeUp then
+      if isSel then row.nudgeDown:Show(); row.nudgeUp:Show() else row.nudgeDown:Hide(); row.nudgeUp:Hide() end
+    end
     local seen = state.lastSeenByItem and state.lastSeenByItem[itemID]
     if seen then
       if (seen.availBelow or 0) > 0 and seen.lowestPrice then
-        row.live:SetText(string.format("|cff10b981АХ:%s (x%d)|r", FormatCoinsPlain(seen.lowestPrice), seen.availBelow))
+        row.live:SetText(string.format("%s |cff10b981(x%d)|r", FormatCoins(seen.lowestPrice), seen.availBelow))
       elseif seen.lowestPrice then
-        row.live:SetText(string.format("|cfff59e0bАХ:%s|r", FormatCoinsPlain(seen.lowestPrice)))
+        row.live:SetText(FormatCoins(seen.lowestPrice))
       else
         row.live:SetText("|cff64748bнет на АХ|r")
       end
@@ -2929,6 +3427,71 @@ local function RenderWatchlist()
       wlScrollBar:Show()
       wlScroll:SetPoint("BOTTOMRIGHT", -14, 4)
     end
+  end
+end
+
+-- O(1) live row update for scan ticks (avoids full RenderWatchlist redraw)
+f._updateWatchlistRowLive = function(itemID)
+  if ForeverSniperDB.miniMode or not f:IsShown() then return end
+  local row = state.wlRowByItem and state.wlRowByItem[itemID]
+  if not row or not row:IsShown() then return end
+  local seen = state.lastSeenByItem and state.lastSeenByItem[itemID]
+  if seen then
+    if (seen.availBelow or 0) > 0 and seen.lowestPrice then
+      row.live:SetText(string.format("%s |cff10b981(x%d)|r", FormatCoins(seen.lowestPrice), seen.availBelow))
+    elseif seen.lowestPrice then
+      row.live:SetText(FormatCoins(seen.lowestPrice))
+    else
+      row.live:SetText("|cff64748bнет на АХ|r")
+    end
+  else
+    row.live:SetText("|cff475569-|r")
+  end
+  if seen and (seen.availBelow or 0) > 0 then
+    row:SetBackdropColor(0.03, 0.16, 0.12, 1)
+    row:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.85)
+    row.bar:SetColorTexture(0.06, 0.73, 0.51, 1)
+  elseif itemID == ForeverSniperDB.selectedID then
+    row:SetBackdropColor(0.11, 0.16, 0.26, 1)
+    row:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.7)
+    row.bar:SetColorTexture(0.92, 0.70, 0.03, 1)
+  else
+    row:SetBackdropColor(0.055, 0.078, 0.135, 1)
+    row:SetBackdropBorderColor(0.14, 0.20, 0.30, 0.6)
+    row.bar:SetColorTexture(0.14, 0.20, 0.30, 0)
+  end
+end
+
+-- Deduplicated card renderer for no-deal scan ticks (also reduces OnEvent upvalues for Lua 5.1 headroom)
+f._showNoDealCard = function(itemID, hitOwnerAt, lowestSeen, maxPrice)
+  if hitOwnerAt then
+    local _, overNm = GetItemVisuals(itemID)
+    dealStripe:SetColorTexture(0.0, 0.71, 0.85, 1)
+    dealCard:SetBackdropBorderColor(0.0, 0.71, 0.85, 0.65)
+    dealBadge:SetText(DOT_AMBER .. " |cff06b6d4ВАШ ЛОТ НА ПЕРВОМ МЕСТЕ|r  |cff94a3b8·|r  |cfff8fafc" .. overNm .. "|r")
+    dealDelta:SetText("|cff94a3b8Свой лот блокирует выкуп ниже лимита|r")
+    dealTitle:SetText("|cffcbd5e1Ваш лот:|r " .. FormatCoins(hitOwnerAt))
+    dealQtyRight:SetText("|cff06b6d4свой|r")
+    dealMeta:SetText("|cff94a3b8Ваш лимит:|r " .. FormatCoins(maxPrice))
+    dealTotalRight:SetText("")
+  elseif lowestSeen then
+    local _, overNm = GetItemVisuals(itemID)
+    local diff = math.max(0, lowestSeen - maxPrice)
+    local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
+    dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
+    dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
+    dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r  |cff94a3b8·|r  |cfff8fafc" .. overNm .. "|r")
+    dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
+    dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
+    dealQtyRight:SetText("|cfff43f5e+|r" .. FormatCoins(diff))
+    dealMeta:SetText("|cff94a3b8Ваш лимит:|r " .. FormatCoins(maxPrice))
+    dealTotalRight:SetText(string.format("|cfff59e0b(+%d%%)|r", overPct))
+  else
+    dealTitle:SetText("|cff94a3b8Лоты по этому предмету не найдены|r")
+    dealDelta:SetText("")
+    dealMeta:SetText("")
+    dealQtyRight:SetText("")
+    dealTotalRight:SetText("")
   end
 end
 
@@ -3024,12 +3587,17 @@ end
 
 ClearPendingDeal = function(keepLowestMsg, allowServerCancel)
   local prev = state.pendingDeal
-  if allowServerCancel and prev and prev.isCommodity and prev.stage == "confirm" then
+  local didCancel = false
+  if allowServerCancel and prev and prev.isCommodity and (prev.stage == "confirm" or prev.stage == "confirming") then
     if C_AuctionHouse and C_AuctionHouse.CancelCommoditiesPurchase then
       pcall(C_AuctionHouse.CancelCommoditiesPurchase)
+      didCancel = true
     end
   end
-  if allowServerCancel then
+  if didCancel then
+    -- Brief 80ms throttle cushion so CancelCommoditiesPurchase and next SendSearchQuery don't collide in the same tick
+    state.pauseScanUntil = math.max(state.pauseScanUntil or 0, GetTime() + 0.08)
+  elseif allowServerCancel then
     state.pauseScanUntil = 0
   end
   state.pendingDeal = nil
@@ -3037,6 +3605,13 @@ ClearPendingDeal = function(keepLowestMsg, allowServerCancel)
     state.lastDisplayedDealItem = nil
   end
   skipBtn:SetFlatEnabled(false)
+  if f._dealIconFrame then f._dealIconFrame:Hide() end
+  dealTitle:ClearAllPoints()
+  dealTitle:SetPoint("TOPLEFT", 14, -26)
+  dealTitle:SetPoint("RIGHT", dealQtyRight, "LEFT", -8, 0)
+  dealMeta:ClearAllPoints()
+  dealMeta:SetPoint("BOTTOMLEFT", 14, 9)
+  dealMeta:SetPoint("RIGHT", dealTotalRight, "LEFT", -8, 0)
   dealStripe:SetColorTexture(0.25, 0.33, 0.45, 0.65)
   dealCard:SetBackdropBorderColor(0.16, 0.22, 0.34, 1)
   dealBadge:SetText("|cff94a3b8ОЖИДАНИЕ|r")
@@ -3047,17 +3622,33 @@ ClearPendingDeal = function(keepLowestMsg, allowServerCancel)
     dealTitle:SetText(state.ahOpen
       and "|cffcbd5e1Ожидание лота ниже заданного лимита...|r"
       or "|cff94a3b8Откройте окно аукциона для начала сканирования|r")
-    local hasBind = GetBindingKey and (GetBindingKey("FOREVERSNIPER_BUY") ~= nil)
-    dealMeta:SetText(hasBind and "" or "|cff64748bСовет: назначьте колесо мыши в ESC -> Назначение клавиш -> Goblin Broker|r")
+    local lastOut = state.sessionBuys and state.sessionBuys.lastOutcome
+    if lastOut and lastOut ~= "" then
+      dealMeta:SetText(lastOut)
+    else
+      dealMeta:SetText(state.buyBindKey1 and "" or "|cff64748bСовет: нажмите иконку клавиш слева, чтобы назначить колесо мыши|r")
+    end
   end
   RefreshBuyButtonText()
 end
 
 local function SetPendingDeal(deal)
   local wasReady = state.pendingDeal and state.pendingDeal.stage == "ready"
+  if not deal.foundAt then deal.foundAt = GetTime() end
   state.pendingDeal = deal
-  local _, itemName, r, g, b, coloredName = GetItemVisuals(deal.itemID)
+  local icon, itemName, r, g, b, coloredName = GetItemVisuals(deal.itemID)
   itemName = deal.name or itemName
+  if f._dealIconFrame and f._dealIconTex then
+    f._dealIconTex:SetTexture(icon)
+    f._dealIconFrame:SetBackdropBorderColor(r or 0.92, g or 0.70, b or 0.03, 0.9)
+    f._dealIconFrame:Show()
+    dealTitle:ClearAllPoints()
+    dealTitle:SetPoint("TOPLEFT", 64, -26)
+    dealTitle:SetPoint("RIGHT", dealQtyRight, "LEFT", -8, 0)
+    dealMeta:ClearAllPoints()
+    dealMeta:SetPoint("BOTTOMLEFT", 64, 9)
+    dealMeta:SetPoint("RIGHT", dealTotalRight, "LEFT", -8, 0)
+  end
 
   local cap = deal.cap or GetQtyCap(deal.itemID)
 
@@ -3066,7 +3657,7 @@ local function SetPendingDeal(deal)
     pct = math.floor(((deal.maxPrice - deal.unitPrice) / deal.maxPrice) * 100 + 0.5)
   end
   local extraReady = 0
-  if state.lastSeenByItem then
+  if #(state.queue or {}) > 1 and state.lastSeenByItem then
     for id, s in pairs(state.lastSeenByItem) do
       if id ~= deal.itemID and IsItemTracked(id) and (s.availBelow or 0) > 0 then
         extraReady = extraReady + 1
@@ -3171,10 +3762,6 @@ local function ExecuteBuyAction(mouseButton)
       dealBadge:SetText("|cfff43f5eНЕДОСТАТОЧНО ЗОЛОТА!|r")
       return
     end
-    if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
-      dealBadge:SetText("|cfff59e0bСЛОТ АХ ЗАНЯТ — НАЖМИТЕ ЕЩЁ РАЗ|r")
-      return
-    end
     state.lastBuyExecAt = now
     C_AuctionHouse.StartCommoditiesPurchase(deal.itemID, chosenQty)
     state.pauseScanUntil = now + 1.5
@@ -3184,12 +3771,27 @@ local function ExecuteBuyAction(mouseButton)
     deal.quoteReady = false
     deal.confirmAt = now
     RefreshBuyButtonText()
+    if f._logEvent then f._logEvent("START", deal.itemID, chosenQty, deal.unitPrice) end
     return
   end
 
   if deal.stage == "confirm" then
-    -- Wait for server COMMODITY_PRICE_UPDATED quote (~50ms), with 0.35s lag fallback
-    if not deal.quoteReady and (now - (deal.confirmAt or 0)) < 0.35 then
+    -- Strictly require server COMMODITY_PRICE_UPDATED quote before Confirm (prevents Internal Auction Error)
+    if not deal.quoteReady then
+      local _, _, qTo = f._getCalibrated()
+      if (now - (deal.confirmAt or 0)) >= qTo then
+        deal.endAt = now
+        if f._calBackoff then f._calBackoff("QUOTE_TO") end
+        if f._recordDealStat then f._recordDealStat(deal, "QUOTE_TO") end
+        if f._logEvent then f._logEvent("QUOTE_TO", deal.itemID, deal.qty, deal.unitPrice) end
+        state.pauseScanUntil = 0
+        ClearPendingDeal(false, true)
+        state.queryInFlight = false
+        state.lastRespAt = 0
+        state.lastQueryAt = 0
+        TryInstantNextQuery()
+        return
+      end
       if not deal.waitBadgeShown then
         deal.waitBadgeShown = true
         dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЖДЁМ ОТВЕТ СЕРВЕРА...|r")
@@ -3198,10 +3800,13 @@ local function ExecuteBuyAction(mouseButton)
     end
     if (now - (state.lastBuyExecAt or 0)) < 0.025 then return end
     state.lastBuyExecAt = now
-    -- Send ConfirmCommoditiesPurchase FIRST for minimum latency, then record attempt
+    -- Keep pendingDeal in "confirming" until server confirms/rejects (prevents dangling reservations)
+    deal.stage = "confirming"
+    deal.confirmSentAt = now
     C_AuctionHouse.ConfirmCommoditiesPurchase(deal.itemID, chosenQty)
-    state.pauseScanUntil = now + 0.35
-    local totalCost = deal.exactCostForQty and deal.exactCostForQty(chosenQty) or ((deal.unitPrice or 0) * chosenQty)
+    local _, _, _, cTo = f._getCalibrated()
+    state.pauseScanUntil = now + cTo
+    local totalCost = deal.quotedTotal or (deal.exactCostForQty and deal.exactCostForQty(chosenQty)) or ((deal.unitPrice or 0) * chosenQty)
     local _, nm = GetItemVisuals(deal.itemID)
     state.lastPurchaseAttempt = {
       itemID = deal.itemID,
@@ -3211,8 +3816,13 @@ local function ExecuteBuyAction(mouseButton)
       maxPrice = deal.maxPrice,
       at = now,
       timeStr = date and date("%H:%M:%S") or "",
+      dealRef = deal,
     }
-    ClearPendingDeal(false, false)
+    buyBtn:SetFlatEnabled(false)
+    buyBtn:SetColors({ 0.14, 0.22, 0.34, 1 }, { 0.14, 0.22, 0.34, 1 }, { 0.22, 0.34, 0.52, 1 }, { 0.85, 0.92, 1 })
+    buyBtn:SetLabel("ОФОРМЛЕНИЕ...")
+    dealBadge:SetText(DOT_AMBER .. " |cff38bdf8ОФОРМЛЕНИЕ СДЕЛКИ...|r")
+    if f._logEvent then f._logEvent("CONFIRM", deal.itemID, chosenQty, totalCost) end
   end
 end
 
@@ -3221,6 +3831,10 @@ function ForeverSniper_OnBuyHotkey()
 end
 
 buyBtn:SetScript("OnClick", function(_, mouseButton)
+  if state.scanMode == "scanner" and not state.pendingDeal then
+    if NS.ExportLiquidityModal then NS.ExportLiquidityModal() end
+    return
+  end
   ExecuteBuyAction(mouseButton)
 end)
 
@@ -3320,6 +3934,7 @@ local function SendTargetQuery()
   end
   if not targetID or not state.ahOpen then return end
   if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+    state.lastQueryAt = GetTime()
     if not state.throttled then
       state.throttled = true
       statusText:SetText(DOT_AMBER .. " |cfff59e0bПауза АХ...|r")
@@ -3333,20 +3948,22 @@ local function SendTargetQuery()
   C_AuctionHouse.SendSearchQuery(itemKey, PRICE_SORTS, false)
 
   state.throttled = false
-  state.lastQueryAt = GetTime()
+  local nowUi = GetTime()
+  state.lastQueryAt = nowUi
+  state.querySentAt = nowUi
+  state.queryInFlight = true
+  state.queryItemID = targetID
   state.queryCount = state.queryCount + 1
-  state.cleanQueryStreak = (state.cleanQueryStreak or 0) + 1
-  if state.cleanQueryStreak >= 3 and (state.queryInterval or 0.25) > 0.25 then
-    state.cleanQueryStreak = 0
-    state.queryInterval = math.max(0.25, state.queryInterval - 0.05)
+  if not state.lastStatusDrawAt or (nowUi - state.lastStatusDrawAt) >= 0.40 then
+    state.lastStatusDrawAt = nowUi
+    if state.avgRttMs then
+      local rc = state.avgRttMs <= 120 and "|cff10b981" or (state.avgRttMs <= 250 and "|cfff59e0b" or "|cfff43f5e")
+      statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r |cff64748b·|r %s%dмс|r", state.queryCount, rc, state.avgRttMs))
+    else
+      statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
+    end
+    statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   end
-  if state.avgRttMs then
-    local rc = state.avgRttMs <= 120 and "|cff10b981" or (state.avgRttMs <= 250 and "|cfff59e0b" or "|cfff43f5e")
-    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r |cff64748b·|r %s%dмс|r", state.queryCount, rc, state.avgRttMs))
-  else
-    statusText:SetText(DOT_GREEN .. string.format(" |cff10b981Скан: %d|r", state.queryCount))
-  end
-  statusPill:SetBackdropBorderColor(0.06, 0.73, 0.51, 0.7)
   if rotated then
     local icon, nm, r, g, b = GetItemVisuals(targetID)
     if ForeverSniperDB.miniMode then
@@ -3374,6 +3991,12 @@ local function ToggleScan()
   ForeverSniperDB.autoScan = not ForeverSniperDB.autoScan
   UpdateStatus()
   if ForeverSniperDB.autoScan then
+    if state.scanMode ~= "scanner" and AuctionHouseFrame and AuctionHouseFrame.CommoditiesBuyFrame and AuctionHouseFrame.CommoditiesBuyFrame:IsShown() then
+      if AuctionHouseFrame.SetDisplayMode and AuctionHouseFrameDisplayMode and AuctionHouseFrameDisplayMode.Auctions then
+        pcall(AuctionHouseFrame.SetDisplayMode, AuctionHouseFrame, AuctionHouseFrameDisplayMode.Auctions)
+        print("|cfff59e0bGoblin Broker:|r переключил окно АХ на вкладку «Аукционы», чтобы Blizzard UI не сбивал бронь.")
+      end
+    end
     state.lastQueryAt = 0
     SendTargetQuery()
   end
@@ -3399,9 +4022,16 @@ imp:EnableMouse(true)
 imp:SetMovable(true)
 imp:RegisterForDrag("LeftButton")
 imp:SetScript("OnDragStart", imp.StartMoving)
-imp:SetScript("OnDragStop", imp.StopMovingOrSizing)
+imp:SetScript("OnDragStop", function(self)
+  self:StopMovingOrSizing()
+  if f._saveModalPos then f._saveModalPos(self, "import") end
+end)
 AttachDropShadow(imp, 14, 0.80)
 imp:Hide()
+imp:HookScript("OnShow", function(self)
+  if f._closePopovers then f._closePopovers() end
+  if f._restoreModalPos then f._restoreModalPos(self, "import") end
+end)
 
 local impAccent = imp:CreateTexture(nil, "ARTWORK")
 impAccent:SetHeight(2)
@@ -3421,9 +4051,27 @@ impBoxBg:SetBackdrop(FLAT_BACKDROP)
 impBoxBg:SetBackdropColor(0.025, 0.038, 0.070, 1)
 impBoxBg:SetBackdropBorderColor(0.18, 0.24, 0.35, 1)
 
-local scroll = CreateFrame("ScrollFrame", nil, impBoxBg, "UIPanelScrollFrameTemplate")
+local scroll = CreateFrame("ScrollFrame", "ForeverSniperImportScroll", impBoxBg, "UIPanelScrollFrameTemplate")
 scroll:SetPoint("TOPLEFT", 8, -8)
-scroll:SetPoint("BOTTOMRIGHT", -28, 8)
+scroll:SetPoint("BOTTOMRIGHT", -14, 8)
+do
+  local sb = _G["ForeverSniperImportScrollScrollBar"]
+  if sb then
+    sb:ClearAllPoints()
+    sb:SetPoint("TOPRIGHT", impBoxBg, "TOPRIGHT", -3, -6)
+    sb:SetPoint("BOTTOMRIGHT", impBoxBg, "BOTTOMRIGHT", -3, 6)
+    sb:SetWidth(4)
+    local up = _G["ForeverSniperImportScrollScrollBarScrollUpButton"]
+    local dn = _G["ForeverSniperImportScrollScrollBarScrollDownButton"]
+    if up then up:SetAlpha(0); up:EnableMouse(false); up:SetHeight(1) end
+    if dn then dn:SetAlpha(0); dn:EnableMouse(false); dn:SetHeight(1) end
+    local thumb = sb:GetThumbTexture()
+    if thumb then
+      thumb:SetColorTexture(0.32, 0.44, 0.62, 0.75)
+      thumb:SetWidth(4)
+    end
+  end
+end
 
 local editBox = CreateFrame("EditBox", nil, scroll)
 editBox:SetMultiLine(true)
@@ -3515,669 +4163,9 @@ impAdd:SetScript("OnClick", function() RunImport(false) end)
 importBtn:SetScript("OnClick", OpenImportModal)
 
 -- ============================================================================
--- Bait Posting ("На живца"): Post 1 unit at minimum duration (2h/12h)
 -- ============================================================================
-do
-local function EnsureBaitsDB()
-  ForeverSniperDB.baits = ForeverSniperDB.baits or {}
-  return ForeverSniperDB.baits
-end
-local baitModal, RenderBaitList
-local BAIT_QTY = 1
-local BAIT_DURATION = 1 -- Shortest AH duration tier (1 = min tier: 2h/12h)
-
-local function FindBagItemLocation(itemID)
-  if not itemID then return nil, 0 end
-  local getNumSlots = (C_Container and C_Container.GetContainerNumSlots) or GetContainerNumSlots
-  local getItemID = (C_Container and C_Container.GetContainerItemID) or GetContainerItemID
-  local getInfo = C_Container and C_Container.GetContainerItemInfo
-  if not getNumSlots then return nil, 0 end
-
-  local totalCount = 0
-  local firstLoc = nil
-  local maxBag = (NUM_BAG_SLOTS or 4) + 2
-  for bag = 0, maxBag do
-    local slots = getNumSlots(bag) or 0
-    for slot = 1, slots do
-      local slotItemID, count, isBound = nil, 1, false
-      if getInfo then
-        local info = getInfo(bag, slot)
-        if info then
-          slotItemID = info.itemID
-          count = info.stackCount or 1
-          isBound = not not info.isBound
-        end
-      end
-      if not slotItemID and getItemID then
-        slotItemID = getItemID(bag, slot)
-        if slotItemID and GetContainerItemInfo then
-          local _, c = GetContainerItemInfo(bag, slot)
-          if c then count = c end
-        end
-      end
-      if slotItemID == itemID then
-        local loc = ItemLocation and ItemLocation.CreateFromBagAndSlot and ItemLocation:CreateFromBagAndSlot(bag, slot)
-        if (not isBound) and loc and C_Item and C_Item.IsBound then
-          local okB, bRes = pcall(C_Item.IsBound, loc)
-          if okB and bRes then isBound = true end
-        end
-        if not isBound then
-          totalCount = totalCount + (count or 1)
-          if not firstLoc and loc then
-            firstLoc = loc
-          end
-        end
-      end
-    end
-  end
-  return firstLoc, totalCount
-end
-
-local function IsBaitCommodity(itemID)
-  if C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo and C_AuctionHouse.MakeItemKey then
-    local info = C_AuctionHouse.GetItemKeyInfo(C_AuctionHouse.MakeItemKey(itemID))
-    if info and info.isCommodity ~= nil then
-      return info.isCommodity
-    end
-  end
-  if GetItemInfo then
-    local _, _, _, _, _, _, _, maxStack = GetItemInfo(itemID)
-    if maxStack then
-      return maxStack > 1
-    end
-  end
-  return true
-end
-
-local baitModalFrame = CreateFrame("Frame", "ForeverSniperBaitFrame", UIParent, "BackdropTemplate")
-baitModal = baitModalFrame
-baitModal:SetSize(560, 440)
-baitModal:SetPoint("CENTER")
-baitModal:SetFrameStrata("DIALOG")
-baitModal:SetMovable(true)
-baitModal:EnableMouse(true)
-baitModal:RegisterForDrag("LeftButton")
-baitModal:SetScript("OnDragStart", baitModal.StartMoving)
-baitModal:SetScript("OnDragStop", baitModal.StopMovingOrSizing)
-baitModal:SetBackdrop(FLAT_BACKDROP)
-baitModal:SetBackdropColor(0.043, 0.059, 0.098, 0.98)
-baitModal:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.75)
-AttachDropShadow(baitModal, 10, 0.6)
-baitModal:Hide()
-
-local baitTitle = baitModal:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-baitTitle:SetPoint("TOPLEFT", 16, -14)
-baitTitle:SetText("|cfff59e0bНа живца|r |cff94a3b8(1 шт)|r")
-
-local baitCloseBtn = CreateFlatButton(nil, baitModal, 24, 22, "X")
-baitCloseBtn:SetPoint("TOPRIGHT", -12, -12)
-baitCloseBtn:SetColors({ 0.12, 0.16, 0.24, 1 }, { 0.25, 0.14, 0.18, 1 }, { 0.30, 0.36, 0.48, 0.8 }, { 0.85, 0.90, 0.96 })
-baitCloseBtn:SetScript("OnClick", function() baitModal:Hide() end)
-
-local baitHotkeyBtn = CreateFlatButton(nil, baitModal, 144, 22, "Хоткей: нет")
-baitHotkeyBtn:SetPoint("RIGHT", baitCloseBtn, "LEFT", -6, 0)
-baitHotkeyBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.75 }, { 0.98, 0.94, 0.54 })
-baitHotkeyBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-
-local baitSkip1Btn = CreateFlatButton(nil, baitModal, 134, 22, "Пропуск 1шт: ВЫКЛ")
-baitSkip1Btn:SetPoint("RIGHT", baitHotkeyBtn, "LEFT", -6, 0)
-local function RefreshBaitSkip1Btn()
-  if ForeverSniperDB.skipSingleBait then
-    baitSkip1Btn:SetLabel("Пропуск 1шт: |cff10b981ВКЛ|r")
-    baitSkip1Btn:SetColors({ 0.04, 0.16, 0.14, 1 }, { 0.06, 0.24, 0.20, 1 }, { 0.06, 0.73, 0.51, 0.85 }, { 0.85, 1, 0.94 })
-  else
-    baitSkip1Btn:SetLabel("Пропуск 1шт: |cff64748bВЫКЛ|r")
-    baitSkip1Btn:SetColors({ 0.08, 0.11, 0.17, 1 }, { 0.13, 0.17, 0.25, 1 }, { 0.18, 0.24, 0.34, 1 }, { 0.65, 0.72, 0.82 })
-  end
-  if f._refreshRailSkip1Btn then f._refreshRailSkip1Btn() end
-end
-baitSkip1Btn:SetScript("OnClick", function()
-  ForeverSniperDB.skipSingleBait = not ForeverSniperDB.skipSingleBait
-  RefreshBaitSkip1Btn()
-end)
-baitSkip1Btn:HookScript("OnEnter", function(self)
-  if not GameTooltip then return end
-  GameTooltip:SetOwner(self, "ANCHOR_TOP")
-  GameTooltip:AddLine("Пропуск лотов по 1 шт (снайпер)", 0.96, 0.70, 0.03)
-  GameTooltip:AddLine("Когда ВКЛ — снайпер игнорирует стакаемые лоты по 1 шт, чтобы не клевать на свою/чужую наживку и ловить реальные пачки (2+ шт).", 0.85, 0.90, 0.96, true)
-  GameTooltip:Show()
-end)
-baitSkip1Btn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-f._refreshSkip1Btn = RefreshBaitSkip1Btn
-
-local baitCapturingKey = false
-local function RefreshBaitHotkeyBtn()
-  if baitCapturingKey then
-    baitHotkeyBtn:SetLabel("|cfffef08aНажмите клавишу...|r")
-    baitHotkeyBtn:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.55, 0.38, 0.03, 1 }, { 0.96, 0.78, 0.12, 0.95 }, { 1, 0.98, 0.85 })
-    return
-  end
-  local k = GetBindingKey and GetBindingKey("FOREVERSNIPER_BAIT")
-  if k and k ~= "" then
-    baitHotkeyBtn:SetLabel("Хоткей: |cfffef08a" .. k .. "|r")
-  else
-    baitHotkeyBtn:SetLabel("Хоткей: |cff64748bне задан|r")
-  end
-  baitHotkeyBtn:SetColors({ 0.08, 0.12, 0.20, 1 }, { 0.14, 0.20, 0.32, 1 }, { 0.92, 0.70, 0.03, 0.75 }, { 0.98, 0.94, 0.54 })
-end
-
-local function StopBaitKeyCapture()
-  baitCapturingKey = false
-  baitHotkeyBtn:EnableKeyboard(false)
-  baitHotkeyBtn:EnableMouseWheel(false)
-  RefreshBaitHotkeyBtn()
-end
-
-local function ApplyBaitBindingCombo(combo)
-  if InCombatLockdown and InCombatLockdown() then
-    print("|cfff43f5eGoblin Broker:|r нельзя менять клавиши в бою.")
-    StopBaitKeyCapture()
-    return
-  end
-  if GetBindingKey and SetBinding then
-    local old1, old2 = GetBindingKey("FOREVERSNIPER_BAIT")
-    if old1 then SetBinding(old1, nil) end
-    if old2 then SetBinding(old2, nil) end
-    if combo and combo ~= "" then
-      SetBinding(combo, "FOREVERSNIPER_BAIT")
-    end
-    if SaveBindings and GetCurrentBindingSet then
-      pcall(SaveBindings, GetCurrentBindingSet())
-    end
-  end
-  StopBaitKeyCapture()
-end
-
-baitHotkeyBtn:SetScript("OnClick", function(self, btn)
-  if btn == "RightButton" then
-    ApplyBaitBindingCombo(nil)
-    print("|cfff59e0bGoblin Broker [На живца]:|r хоткей сброшен.")
-    return
-  end
-  if baitCapturingKey then
-    StopBaitKeyCapture()
-    return
-  end
-  baitCapturingKey = true
-  self:EnableKeyboard(true)
-  self:EnableMouseWheel(true)
-  RefreshBaitHotkeyBtn()
-end)
-
-baitHotkeyBtn:SetScript("OnKeyDown", function(_, key)
-  if not baitCapturingKey then return end
-  if key == "ESCAPE" then
-    StopBaitKeyCapture()
-    return
-  end
-  if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
-    return
-  end
-  local prefix = ((IsShiftKeyDown and IsShiftKeyDown()) and "SHIFT-" or "")
-    .. ((IsControlKeyDown and IsControlKeyDown()) and "CTRL-" or "")
-    .. ((IsAltKeyDown and IsAltKeyDown()) and "ALT-" or "")
-  ApplyBaitBindingCombo(prefix .. key)
-end)
-
-baitHotkeyBtn:SetScript("OnMouseWheel", function(_, delta)
-  if not baitCapturingKey then return end
-  local prefix = ((IsShiftKeyDown and IsShiftKeyDown()) and "SHIFT-" or "")
-    .. ((IsControlKeyDown and IsControlKeyDown()) and "CTRL-" or "")
-    .. ((IsAltKeyDown and IsAltKeyDown()) and "ALT-" or "")
-  ApplyBaitBindingCombo(prefix .. (delta > 0 and "MOUSEWHEELUP" or "MOUSEWHEELDOWN"))
-end)
-
-baitHotkeyBtn:HookScript("OnEnter", function(self)
-  if not GameTooltip then return end
-  GameTooltip:SetOwner(self, "ANCHOR_TOP")
-  GameTooltip:AddLine("Хоткей «На живца»", 0.96, 0.70, 0.03)
-  GameTooltip:AddLine("ЛКМ: назначить клавишу или колесо мыши", 0.85, 0.90, 0.96)
-  GameTooltip:AddLine("ПКМ: сбросить клавишу", 0.65, 0.75, 0.85)
-  GameTooltip:AddLine("Выставляет 1 шт выбранной (★) наживки без открытия этого окна.", 0.60, 0.72, 0.84, true)
-  GameTooltip:Show()
-end)
-baitHotkeyBtn:HookScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-baitModal:HookScript("OnHide", function()
-  if baitCapturingKey then StopBaitKeyCapture() end
-end)
-baitModal.RefreshHotkey = RefreshBaitHotkeyBtn
-
-local baitHint = baitModal:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitHint:SetPoint("TOPLEFT", 16, -38)
-baitHint:SetPoint("TOPRIGHT", -16, -38)
-baitHint:SetJustifyH("LEFT")
-baitHint:SetText("|cff94a3b8Перетащите предмет из сумки или введите ID и цену. Клик «Выставить 1 шт» ставит ровно 1 шт на минимальный срок.|r")
-
--- Add / Edit Card inside baitModal
-local baitEditCard = CreateFrame("Frame", nil, baitModal, "BackdropTemplate")
-baitEditCard:SetPoint("TOPLEFT", 14, -64)
-baitEditCard:SetPoint("TOPRIGHT", -14, -64)
-baitEditCard:SetHeight(86)
-baitEditCard:SetBackdrop(FLAT_BACKDROP)
-baitEditCard:SetBackdropColor(0.067, 0.094, 0.153, 1)
-baitEditCard:SetBackdropBorderColor(0.16, 0.23, 0.35, 1)
-
-local baitIconFrame = CreateFrame("Button", nil, baitEditCard, "BackdropTemplate")
-baitIconFrame:SetSize(36, 36)
-baitIconFrame:SetPoint("TOPLEFT", 10, -10)
-baitIconFrame:SetBackdrop(FLAT_BACKDROP)
-baitIconFrame:SetBackdropColor(0.03, 0.04, 0.08, 1)
-baitIconFrame:SetBackdropBorderColor(0.25, 0.35, 0.50, 1)
-
-local baitIconTex = baitIconFrame:CreateTexture(nil, "ARTWORK")
-baitIconTex:SetPoint("TOPLEFT", 2, -2)
-baitIconTex:SetPoint("BOTTOMRIGHT", -2, 2)
-baitIconTex:SetTexture("Interface\\Icons\\INV_Misc_Fish_02")
-baitIconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-local baitNameText = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-baitNameText:SetPoint("TOPLEFT", baitIconFrame, "TOPRIGHT", 10, -1)
-baitNameText:SetPoint("RIGHT", -12, 0)
-baitNameText:SetJustifyH("LEFT")
-baitNameText:SetText("|cff94a3b8Выберите предмет для наживки|r")
-
-local baitSubText = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitSubText:SetPoint("TOPLEFT", baitNameText, "BOTTOMLEFT", 0, -3)
-baitSubText:SetPoint("RIGHT", -12, 0)
-baitSubText:SetJustifyH("LEFT")
-baitSubText:SetText("|cff64748bПеретащите из сумки на иконку, Shift+клик или введите ID|r")
-
-local baitIdLabel = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitIdLabel:SetPoint("BOTTOMLEFT", 10, 12)
-baitIdLabel:SetText("|cff94a3b8ID:|r")
-
-local baitIdInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
-StyleFlatBox(baitIdInput, 76, 22)
-baitIdInput:SetPoint("LEFT", baitIdLabel, "RIGHT", 6, 0)
-baitIdInput:SetNumeric(true)
-baitIdInput:SetJustifyH("CENTER")
-
-local baitLastIdFocusAt = 0
-baitIdInput:HookScript("OnEditFocusGained", function() baitLastIdFocusAt = GetTime() end)
-baitIdInput:HookScript("OnEditFocusLost", function() baitLastIdFocusAt = GetTime() end)
-
-local baitPriceLabel = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitPriceLabel:SetPoint("LEFT", baitIdInput, "RIGHT", 12, 0)
-baitPriceLabel:SetText("|cff94a3b8Цена:|r")
-
-local baitGoldInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
-StyleFlatBox(baitGoldInput, 54, 22)
-baitGoldInput:SetPoint("LEFT", baitPriceLabel, "RIGHT", 6, 0)
-baitGoldInput:SetNumeric(true)
-baitGoldInput:SetJustifyH("RIGHT")
-
-local baitGUnit = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitGUnit:SetPoint("LEFT", baitGoldInput, "RIGHT", 3, 0)
-baitGUnit:SetText("|cffffd700з|r")
-
-local baitSilverInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
-StyleFlatBox(baitSilverInput, 36, 22)
-baitSilverInput:SetPoint("LEFT", baitGUnit, "RIGHT", 6, 0)
-baitSilverInput:SetNumeric(true)
-baitSilverInput:SetMaxLetters(2)
-baitSilverInput:SetJustifyH("RIGHT")
-
-local baitSUnit = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitSUnit:SetPoint("LEFT", baitSilverInput, "RIGHT", 3, 0)
-baitSUnit:SetText("|cffc7c7cfс|r")
-
-local baitCopperInput = CreateFrame("EditBox", nil, baitEditCard, "BackdropTemplate")
-StyleFlatBox(baitCopperInput, 36, 22)
-baitCopperInput:SetPoint("LEFT", baitSUnit, "RIGHT", 6, 0)
-baitCopperInput:SetNumeric(true)
-baitCopperInput:SetMaxLetters(2)
-baitCopperInput:SetJustifyH("RIGHT")
-
-local baitCUnit = baitEditCard:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitCUnit:SetPoint("LEFT", baitCopperInput, "RIGHT", 3, 0)
-baitCUnit:SetText("|cffeda55fм|r")
-
-local baitSaveBtn = CreateFlatButton(nil, baitEditCard, 98, 22, "Сохранить")
-baitSaveBtn:SetPoint("RIGHT", -10, 0)
-baitSaveBtn:SetPoint("CENTER", baitCopperInput, "CENTER", 0, 0)
-baitSaveBtn:ClearAllPoints()
-baitSaveBtn:SetPoint("RIGHT", baitEditCard, "RIGHT", -10, 0)
-baitSaveBtn:SetPoint("TOP", baitIdInput, "TOP", 0, 0)
-baitSaveBtn:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.62, 0.44, 0.03, 1 }, { 0.92, 0.70, 0.03, 0.9 }, { 1, 0.96, 0.85 })
-
-local function ApplyBaitPreviewItemID(itemID, presetCopper)
-  local id = tonumber(itemID)
-  if not id or id <= 0 then return false end
-  baitIdInput:SetText(tostring(id))
-  local icon, nm, r, g, b = GetItemVisuals(id)
-  baitIconTex:SetTexture(icon)
-  baitIconFrame:SetBackdropBorderColor(r, g, b, 0.9)
-  baitNameText:SetText(nm)
-  baitNameText:SetTextColor(r, g, b)
-  local _, bagCount = FindBagItemLocation(id)
-  baitSubText:SetText(string.format("|cff64748bID %d  |  В сумках: |r%s%d шт|r", id, bagCount > 0 and "|cff10b981" or "|cfff43f5e", bagCount))
-  local existing = presetCopper or EnsureBaitsDB()[id]
-  if existing and existing > 0 then
-    local gVal = math.floor(existing / 10000)
-    local sVal = math.floor((existing % 10000) / 100)
-    local cVal = existing % 100
-    baitGoldInput:SetText(gVal > 0 and tostring(gVal) or "")
-    baitSilverInput:SetText(sVal > 0 and tostring(sVal) or "")
-    baitCopperInput:SetText(cVal > 0 and tostring(cVal) or "")
-  else
-    baitGoldInput:SetText("")
-    baitSilverInput:SetText("")
-    baitCopperInput:SetText("")
-  end
-  baitGoldInput:SetFocus()
-  return true
-end
-
-local function PreviewBaitDraggedItem()
-  if not GetCursorInfo then return false end
-  local kind, itemID = GetCursorInfo()
-  if kind == "item" and itemID then
-    ClearCursor()
-    return ApplyBaitPreviewItemID(itemID)
-  end
-  return false
-end
-
-baitIconFrame:SetScript("OnReceiveDrag", PreviewBaitDraggedItem)
-baitIconFrame:SetScript("OnClick", PreviewBaitDraggedItem)
-baitIconFrame:SetScript("OnEnter", function(self)
-  local sel = tonumber(baitIdInput:GetText())
-  if GameTooltip then
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    if sel and sel > 0 then
-      GameTooltip:SetItemByID(sel)
-      GameTooltip:AddLine(" ")
-    end
-    GameTooltip:AddLine("Перетащите предмет из сумки для автозаполнения", 0.58, 0.75, 0.90)
-    GameTooltip:Show()
-  end
-end)
-baitIconFrame:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-
-f._tryBaitInsert = function(link)
-  if not baitModal:IsShown() then return false end
-  if (baitIdInput:HasFocus() or (GetTime() - baitLastIdFocusAt) < 0.25) and type(link) == "string" then
-    local itemID = link:match("item:(%d+)")
-    if itemID then
-      ApplyBaitPreviewItemID(itemID)
-      return true
-    end
-  end
-  return false
-end
-
--- List Container inside baitModal
-local baitListBox = CreateFrame("Frame", nil, baitModal, "BackdropTemplate")
-baitListBox:SetPoint("TOPLEFT", baitEditCard, "BOTTOMLEFT", 0, -10)
-baitListBox:SetPoint("BOTTOMRIGHT", -14, 14)
-baitListBox:SetBackdrop(FLAT_BACKDROP)
-baitListBox:SetBackdropColor(0.055, 0.078, 0.125, 1)
-baitListBox:SetBackdropBorderColor(0.14, 0.20, 0.30, 1)
-
-local baitScroll = CreateFrame("ScrollFrame", "ForeverSniperBaitScroll", baitListBox, "UIPanelScrollFrameTemplate")
-baitScroll:SetPoint("TOPLEFT", 6, -6)
-baitScroll:SetPoint("BOTTOMRIGHT", -26, 6)
-
-local baitContent = CreateFrame("Frame", nil, baitScroll)
-baitContent:SetSize(496, 200)
-baitScroll:SetScrollChild(baitContent)
-
-local baitEmptyText = baitListBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-baitEmptyText:SetPoint("CENTER")
-baitEmptyText:SetText("|cff64748bСписок наживок пуст. Добавьте предмет и цену выше.|r")
-
-local baitRows = {}
-
-local function ExecuteBaitPost(itemID, priceCopper)
-  if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
-    print("|cfff59e0bGoblin Broker [На живца]:|r сначала откройте окно аукциона.")
-    return
-  end
-  state.pauseScanUntil = GetTime() + 0.6
-  if not priceCopper or priceCopper <= 0 then
-    print("|cfff59e0bGoblin Broker [На живца]:|r укажите цену больше 0.")
-    return
-  end
-  local itemLoc, bagCount = FindBagItemLocation(itemID)
-  if not itemLoc or bagCount < BAIT_QTY then
-    print("|cfff59e0bGoblin Broker [На живца]:|r предмета нет в сумках (нужна минимум 1 шт).")
-    if RenderBaitList then RenderBaitList() end
-    return
-  end
-  local _, itemName = GetItemVisuals(itemID)
-  local isCommodity = IsBaitCommodity(itemID)
-  local ok, needsConfirm = false, false
-
-  if state.pendingBaitConfirmID == itemID then
-    state.pendingBaitConfirmID = nil
-    if isCommodity and C_AuctionHouse and C_AuctionHouse.ConfirmPostCommodity then
-      ok = pcall(C_AuctionHouse.ConfirmPostCommodity, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper)
-    elseif (not isCommodity) and C_AuctionHouse and C_AuctionHouse.ConfirmPostItem then
-      ok = pcall(C_AuctionHouse.ConfirmPostItem, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper, priceCopper)
-    end
-  else
-    if isCommodity and C_AuctionHouse and C_AuctionHouse.PostCommodity then
-      ok, needsConfirm = pcall(C_AuctionHouse.PostCommodity, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper)
-    elseif (not isCommodity) and C_AuctionHouse and C_AuctionHouse.PostItem then
-      ok, needsConfirm = pcall(C_AuctionHouse.PostItem, itemLoc, BAIT_DURATION, BAIT_QTY, priceCopper, priceCopper)
-    end
-  end
-
-  if ok and needsConfirm == true then
-    state.pendingBaitConfirmID = itemID
-    print(string.format("|cfff59e0bGoblin Broker [На живца]:|r цена сильно ниже рынка — нажмите |cfffef08aПодтв. цену!|r ещё раз для %s.", itemName or itemID))
-  elseif ok then
-    print(string.format("|cfff59e0bGoblin Broker [На живца]:|r выставлен 1x %s за %s (мин. срок).", itemName or itemID, FormatCoinsPlain(priceCopper)))
-  else
-    print("|cfff59e0bGoblin Broker [На живца]:|r не удалось выставить лот (проверьте АХ и предмет).")
-  end
-  if RenderBaitList then RenderBaitList() end
-end
-
-RenderBaitList = function()
-  local baits = EnsureBaitsDB()
-  local list = {}
-  for id, price in pairs(baits) do
-    local _, nm = GetItemVisuals(id)
-    table.insert(list, { id = id, price = price, name = nm or tostring(id) })
-  end
-  table.sort(list, function(a, b)
-    if a.name ~= b.name then return a.name < b.name end
-    return a.id < b.id
-  end)
-
-  if #list == 0 then
-    baitEmptyText:Show()
-  else
-    baitEmptyText:Hide()
-  end
-
-  local ahOpen = AuctionHouseFrame and AuctionHouseFrame:IsShown()
-  for i, entry in ipairs(list) do
-    local row = baitRows[i]
-    if not row then
-      row = CreateFrame("Button", nil, baitContent, "BackdropTemplate")
-      row:SetHeight(40)
-      row:SetPoint("TOPLEFT", 0, -((i - 1) * 44))
-      row:SetPoint("TOPRIGHT", 0, -((i - 1) * 44))
-      row:SetBackdrop(FLAT_BACKDROP)
-      row:SetBackdropColor(0.075, 0.105, 0.17, 0.95)
-      row:SetBackdropBorderColor(0.15, 0.22, 0.34, 1)
-
-      row.ico = row:CreateTexture(nil, "ARTWORK")
-      row.ico:SetSize(26, 26)
-      row.ico:SetPoint("LEFT", 8, 0)
-      row.ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-      row.delBtn = CreateFlatButton(nil, row, 22, 22, "X")
-      row.delBtn:SetPoint("RIGHT", -6, 0)
-      row.delBtn:SetColors({ 0.18, 0.08, 0.10, 1 }, { 0.32, 0.10, 0.14, 1 }, { 0.45, 0.15, 0.20, 0.8 }, { 0.95, 0.65, 0.70 })
-
-      row.postBtn = CreateFlatButton(nil, row, 108, 24, "Выставить 1 шт")
-      row.postBtn:SetPoint("RIGHT", row.delBtn, "LEFT", -6, 0)
-
-      row.priceText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-      row.priceText:SetPoint("TOPRIGHT", row.postBtn, "TOPLEFT", -10, 2)
-      row.priceText:SetWidth(112)
-      row.priceText:SetJustifyH("RIGHT")
-
-      row.metaText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.metaText:SetPoint("TOPRIGHT", row.priceText, "BOTTOMRIGHT", 0, -2)
-      row.metaText:SetWidth(112)
-      row.metaText:SetJustifyH("RIGHT")
-      row.metaText:SetText("|cff64748b1 шт • мин. срок|r")
-
-      row.nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-      row.nameText:SetPoint("TOPLEFT", row.ico, "TOPRIGHT", 8, -1)
-      row.nameText:SetPoint("RIGHT", row.priceText, "LEFT", -8, 0)
-      row.nameText:SetJustifyH("LEFT")
-      row.nameText:SetWordWrap(false)
-
-      row.bagText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.bagText:SetPoint("BOTTOMLEFT", row.ico, "BOTTOMRIGHT", 8, 1)
-      row.bagText:SetPoint("RIGHT", row.priceText, "LEFT", -8, 0)
-      row.bagText:SetJustifyH("LEFT")
-
-      baitRows[i] = row
-    end
-
-    local icon, nm, r, g, b = GetItemVisuals(entry.id)
-    local _, bagCount = FindBagItemLocation(entry.id)
-    if not ForeverSniperDB.activeBaitID or not baits[ForeverSniperDB.activeBaitID] then
-      ForeverSniperDB.activeBaitID = entry.id
-    end
-    local isActiveBait = (ForeverSniperDB.activeBaitID == entry.id)
-    row.itemID = entry.id
-    row.priceCopper = entry.price
-    row.isActiveBait = isActiveBait
-    row.ico:SetTexture(icon)
-    row.nameText:SetText((isActiveBait and "|cfff59e0b★ |r" or "") .. nm)
-    row.nameText:SetTextColor(r, g, b)
-    row:SetBackdropBorderColor(isActiveBait and 0.92 or 0.15, isActiveBait and 0.70 or 0.22, isActiveBait and 0.03 or 0.34, isActiveBait and 0.9 or 1)
-    row.bagText:SetText(string.format("|cff94a3b8В сумках:|r %s%d шт|r%s", bagCount > 0 and "|cff10b981" or "|cfff43f5e", bagCount, isActiveBait and "  |cfff59e0b[Хоткей]|r" or ""))
-    row.priceText:SetText(FormatCoins(entry.price))
-
-    local needsConfirm = (state.pendingBaitConfirmID == entry.id)
-    if not ahOpen then
-      row.postBtn:SetLabel("Откройте АХ")
-      row.postBtn:SetColors({ 0.10, 0.13, 0.20, 1 }, { 0.14, 0.18, 0.26, 1 }, { 0.20, 0.26, 0.36, 0.6 }, { 0.50, 0.58, 0.70 })
-    elseif bagCount < 1 then
-      row.postBtn:SetLabel("Нет в сумке")
-      row.postBtn:SetColors({ 0.10, 0.13, 0.20, 1 }, { 0.14, 0.18, 0.26, 1 }, { 0.20, 0.26, 0.36, 0.6 }, { 0.50, 0.58, 0.70 })
-    elseif needsConfirm then
-      row.postBtn:SetLabel("Подтв. цену!")
-      row.postBtn:SetColors({ 0.52, 0.14, 0.14, 1 }, { 0.68, 0.18, 0.18, 1 }, { 0.96, 0.35, 0.35, 0.95 }, { 1, 0.95, 0.95 })
-    else
-      row.postBtn:SetLabel("Выставить 1 шт")
-      row.postBtn:SetColors({ 0.45, 0.32, 0.02, 1 }, { 0.62, 0.44, 0.03, 1 }, { 0.92, 0.70, 0.03, 0.95 }, { 1, 0.96, 0.85 })
-    end
-
-    row:SetScript("OnClick", function(self)
-      ForeverSniperDB.activeBaitID = self.itemID
-      ApplyBaitPreviewItemID(self.itemID, self.priceCopper)
-      RenderBaitList()
-    end)
-    row:SetScript("OnEnter", function(self)
-      self:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.75)
-      if GameTooltip then
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetItemByID(self.itemID)
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Клик по строке: выбрать для хоткея (★) и ред. цены", 0.65, 0.75, 0.85)
-        GameTooltip:Show()
-      end
-    end)
-    row:SetScript("OnLeave", function(self)
-      if self.isActiveBait then
-        self:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.9)
-      else
-        self:SetBackdropBorderColor(0.15, 0.22, 0.34, 1)
-      end
-      if GameTooltip then GameTooltip:Hide() end
-    end)
-
-    row.postBtn:SetScript("OnClick", function()
-      ForeverSniperDB.activeBaitID = entry.id
-      ExecuteBaitPost(entry.id, entry.price)
-    end)
-    row.delBtn:SetScript("OnClick", function()
-      EnsureBaitsDB()[entry.id] = nil
-      if ForeverSniperDB.activeBaitID == entry.id then
-        ForeverSniperDB.activeBaitID = nil
-      end
-      if state.pendingBaitConfirmID == entry.id then
-        state.pendingBaitConfirmID = nil
-      end
-      RenderBaitList()
-    end)
-    row:Show()
-  end
-
-  for i = #list + 1, #baitRows do
-    baitRows[i]:Hide()
-  end
-  baitContent:SetHeight(math.max(180, #list * 44))
-end
-
-baitSaveBtn:SetScript("OnClick", function()
-  local id = tonumber(baitIdInput:GetText())
-  local g = tonumber(baitGoldInput:GetText()) or 0
-  local s = tonumber(baitSilverInput:GetText()) or 0
-  local c = tonumber(baitCopperInput:GetText()) or 0
-  local copper = (g * 10000) + (s * 100) + c
-  if not id or id <= 0 or copper <= 0 then
-    print("|cfff59e0bGoblin Broker [На живца]:|r укажите корректный ID предмета и цену (з / с / м).")
-    return
-  end
-  EnsureBaitsDB()[id] = copper
-  ForeverSniperDB.activeBaitID = id
-  state.pendingBaitConfirmID = nil
-  ApplyBaitPreviewItemID(id, copper)
-  RenderBaitList()
-end)
-
-baitIdInput:SetScript("OnEnterPressed", function(self)
-  local id = tonumber(self:GetText())
-  if id and id > 0 then
-    ApplyBaitPreviewItemID(id)
-  else
-    self:ClearFocus()
-  end
-end)
-
-function ForeverSniper_OnBaitHotkey()
-  local baits = EnsureBaitsDB()
-  local targetID = ForeverSniperDB.activeBaitID
-  if not targetID or not baits[targetID] then
-    for id in pairs(baits) do
-      targetID = id
-      ForeverSniperDB.activeBaitID = id
-      break
-    end
-  end
-  if not targetID or not baits[targetID] then
-    print("|cfff59e0bGoblin Broker [На живца]:|r список наживок пуст. Добавьте предмет в окне «На живца».")
-    return
-  end
-  ExecuteBaitPost(targetID, baits[targetID])
-end
-
-local function ToggleBaitModal()
-  if baitModal:IsShown() then
-    baitModal:Hide()
-  else
-    EnsureBaitsDB()
-    RefreshBaitHotkeyBtn()
-    RefreshBaitSkip1Btn()
-    RenderBaitList()
-    baitModal:Show()
-  end
-end
-
-f._baitModal = baitModal
-f._renderBaitList = RenderBaitList
-if f._baitBtn then f._baitBtn:SetScript("OnClick", ToggleBaitModal) end
-end
+-- Bait Posting ("?? ?????") is loaded from Bait.lua
+-- ============================================================================
 
 -- ============================================================================
 -- Saved Presets & Inline Popover (Save / Load / Copy / Delete / Export)
@@ -4202,6 +4190,38 @@ local PRO_STARTER_PRESETS = {
   ["[PRO] Рейд-Химия и Настои"] = {
     watchlist = { [13510] = 165000, [13512] = 215000, [13511] = 155000, [13457] = 14500, [13452] = 7000, [13446] = 2600 },
     qtyLimits = { [13510] = 5, [13512] = 5, [13511] = 5, [13457] = 40, [13452] = 60, [13446] = 100 },
+  },
+  ["[PRO] Расходники для рейда"] = {
+    watchlist = {
+      [13512] = 220999, [13510] = 169980, [13511] = 159175, [13513] = 136000, [13506] = 101909,
+      [274274] = 100, [274275] = 100, [274273] = 100, [274276] = 100,
+      [13444] = 6864, [13446] = 2740, [18253] = 22865, [13455] = 3390, [3387] = 6799,
+      [5634] = 1606, [20008] = 100, [13442] = 8070, [20002] = 100,
+      [13457] = 15096, [13456] = 3623, [13458] = 7649, [13459] = 6031, [13461] = 4233, [13460] = 100,
+      [250943] = 19036, [250937] = 10200, [250949] = 10624, [241650] = 3476, [250954] = 7945, [250955] = 1951,
+      [13454] = 7559, [13452] = 7222, [6373] = 332, [21546] = 3824, [17708] = 100,
+      [9264] = 13676, [9187] = 2293, [9206] = 6794, [12820] = 6114, [8951] = 385,
+      [13445] = 696, [3825] = 743, [9088] = 3479, [20007] = 100, [13447] = 5969, [13453] = 13174,
+      [250337] = 16507, [250328] = 11282, [250351] = 11496, [250350] = 12743, [250329] = 8465,
+      [250335] = 6125, [250333] = 6371, [250341] = 8019, [250348] = 8330, [250343] = 10313,
+      [20749] = 100, [20748] = 100, [23123] = 100, [18262] = 100, [12404] = 450,
+      [23122] = 100, [12643] = 487, [20520] = 15721, [14530] = 933, [10646] = 3995,
+    },
+    qtyLimits = {
+      [13512] = 20, [13510] = 20, [13511] = 20, [13513] = 20, [13506] = 20,
+      [274274] = 20, [274275] = 20, [274273] = 20, [274276] = 20,
+      [13444] = 100, [13446] = 100, [18253] = 100, [13455] = 100, [3387] = 100,
+      [5634] = 100, [20008] = 100, [13442] = 100, [20002] = 100,
+      [13457] = 100, [13456] = 100, [13458] = 100, [13459] = 100, [13461] = 100, [13460] = 100,
+      [250943] = 100, [250937] = 100, [250949] = 100, [241650] = 100, [250954] = 100, [250955] = 100,
+      [13454] = 100, [13452] = 100, [6373] = 100, [21546] = 100, [17708] = 100,
+      [9264] = 100, [9187] = 100, [9206] = 100, [12820] = 100, [8951] = 100,
+      [13445] = 100, [3825] = 100, [9088] = 100, [20007] = 100, [13447] = 100, [13453] = 100,
+      [250337] = 100, [250328] = 100, [250351] = 100, [250350] = 100, [250329] = 100,
+      [250335] = 100, [250333] = 100, [250341] = 100, [250348] = 100, [250343] = 100,
+      [20749] = 100, [20748] = 100, [23123] = 100, [18262] = 100, [12404] = 100,
+      [23122] = 100, [12643] = 100, [20520] = 100, [14530] = 100, [10646] = 100,
+    },
   },
 }
 
@@ -4353,6 +4373,32 @@ do
   local btnNone = CreateFlatButton(nil, menu, 140, 22, "Без шаблона")
   btnNone:SetColors({ 0.10, 0.13, 0.20, 1 }, { 0.18, 0.22, 0.32, 1 }, { 0.24, 0.30, 0.42, 0.8 }, { 0.78, 0.84, 0.92 })
 
+  local presetScroll = CreateFrame("ScrollFrame", "ForeverSniperPresetScroll", menu, "UIPanelScrollFrameTemplate")
+  presetScroll:SetPoint("TOPLEFT", 8, -46)
+  presetScroll:SetWidth(400)
+  presetScroll:SetHeight(25)
+  do
+    local sb = _G["ForeverSniperPresetScrollScrollBar"]
+    if sb then
+      sb:ClearAllPoints()
+      sb:SetPoint("TOPRIGHT", presetScroll, "TOPRIGHT", 2, -2)
+      sb:SetPoint("BOTTOMRIGHT", presetScroll, "BOTTOMRIGHT", 2, 2)
+      sb:SetWidth(4)
+      local up = _G["ForeverSniperPresetScrollScrollBarScrollUpButton"]
+      local dn = _G["ForeverSniperPresetScrollScrollBarScrollDownButton"]
+      if up then up:SetAlpha(0); up:EnableMouse(false); up:SetHeight(1) end
+      if dn then dn:SetAlpha(0); dn:EnableMouse(false); dn:SetHeight(1) end
+      local thumb = sb:GetThumbTexture()
+      if thumb then
+        thumb:SetColorTexture(0.32, 0.44, 0.62, 0.75)
+        thumb:SetWidth(4)
+      end
+    end
+  end
+  local presetListContent = CreateFrame("Frame", nil, presetScroll)
+  presetListContent:SetSize(392, 25)
+  presetScroll:SetScrollChild(presetListContent)
+
   local mRows = {}
   local function RenderPresetMenu()
     ForeverSniperDB.presets = ForeverSniperDB.presets or {}
@@ -4361,14 +4407,14 @@ do
     table.sort(names)
 
     for _, r in ipairs(mRows) do r:Hide() end
-    local y = -46
+    local y = 0
     for i, nm in ipairs(names) do
       local p = ForeverSniperDB.presets[nm]
       local r = mRows[i]
       if not r then
-        r = CreateFrame("Frame", nil, menu)
-        r:SetSize(400, 24)
-        r.sel = CreateFlatButton(nil, r, 326, 22, "")
+        r = CreateFrame("Frame", nil, presetListContent)
+        r:SetSize(392, 24)
+        r.sel = CreateFlatButton(nil, r, 318, 22, "")
         r.sel:SetPoint("LEFT", 0, 0)
         r.sel.label:SetJustifyH("LEFT")
         r.sel.label:ClearAllPoints()
@@ -4414,7 +4460,7 @@ do
       for _ in pairs(p.watchlist or {}) do cnt = cnt + 1 end
       local isActive = (nm == ForeverSniperDB.activePreset)
       r:ClearAllPoints()
-      r:SetPoint("TOPLEFT", 8, y)
+      r:SetPoint("TOPLEFT", 0, y)
       r.sel.presetName = nm
       if isActive then
         r.sel:SetLabel(string.format("%s %s  |cff6ee7b7(%d)|r", DOT_GREEN, nm, cnt))
@@ -4445,23 +4491,40 @@ do
         OpenExportModal("Экспорт шаблона: " .. nm, table.concat(lines, "\n"))
         print(string.format("|cff06b6d4Goblin Broker:|r экспорт шаблона «%s» (%d поз.) — скопируйте Ctrl+C.", nm, #lines))
       end)
-      r.del:SetScript("OnClick", function()
-        ForeverSniperDB.presets[nm] = nil
-        if ForeverSniperDB.activePreset == nm then
-          ForeverSniperDB.activePreset = nil
-          ForeverSniperDB.presetDirty = false
-          UpdateStatus()
+      r.del:SetScript("OnClick", function(self)
+        local now = GetTime and GetTime() or 0
+        if self._armName == nm and (now - (self._armAt or 0)) <= 3.0 then
+          self._armName = nil
+          ForeverSniperDB.presets[nm] = nil
+          if ForeverSniperDB.activePreset == nm then
+            ForeverSniperDB.activePreset = nil
+            ForeverSniperDB.presetDirty = false
+            UpdateStatus()
+          end
+          RenderPresetMenu()
+        else
+          self._armName = nm
+          self._armAt = now
+          self:SetLabel("?")
+          self:SetColors({ 0.65, 0.12, 0.16, 1 }, { 0.80, 0.16, 0.22, 1 }, { 0.96, 0.30, 0.36, 1 }, { 1, 1, 1 })
         end
-        RenderPresetMenu()
       end)
       r:Show()
       y = y - 25
     end
 
-    if #names == 0 then y = y - 4 end
+    local contentH = math.max(4, -y)
+    presetListContent:SetHeight(contentH)
+    local visH = math.min(250, contentH)
+    presetScroll:SetHeight(visH)
+    local sb = _G["ForeverSniperPresetScrollScrollBar"]
+    if sb then
+      if contentH > 250 then sb:Show() else sb:Hide() end
+    end
+    local botY = -46 - visH
     divBot:ClearAllPoints()
-    divBot:SetPoint("TOPLEFT", 8, y - 2)
-    divBot:SetPoint("TOPRIGHT", -8, y - 2)
+    divBot:SetPoint("TOPLEFT", 8, botY - 2)
+    divBot:SetPoint("TOPRIGHT", -8, botY - 2)
 
     local missingPro = 0
     for nm in pairs(PRO_STARTER_PRESETS) do
@@ -4472,16 +4535,16 @@ do
     btnNone:ClearAllPoints()
     if missingPro > 0 then
       btnPro:Show()
-      btnPro:SetPoint("TOPLEFT", 8, y - 9)
+      btnPro:SetPoint("TOPLEFT", 8, botY - 9)
       btnNone:SetWidth(220)
       btnNone:SetPoint("LEFT", btnPro, "RIGHT", 6, 0)
     else
       btnPro:Hide()
       btnNone:SetWidth(400)
-      btnNone:SetPoint("TOPLEFT", 8, y - 9)
+      btnNone:SetPoint("TOPLEFT", 8, botY - 9)
     end
     RefreshCreatePresetButtons()
-    menu:SetHeight(-(y - 39))
+    menu:SetHeight(-(botY - 39))
   end
 
   local function CreatePresetFromInput(mode)
@@ -4573,7 +4636,7 @@ do
     if added > 0 then
       print(string.format("|cff10b981Goblin Broker:|r добавлено %d PRO-шаблонов.", added))
     else
-      print("|cff94a3b8Goblin Broker:|r все 5 PRO-шаблонов уже есть.")
+      print("|cff94a3b8Goblin Broker:|r все 6 PRO-шаблонов уже есть.")
     end
   end)
 
@@ -4587,6 +4650,7 @@ do
     if menu:IsShown() then
       menu:Hide()
     else
+      if f._closePopovers then f._closePopovers(menu) end
       RenderPresetMenu()
       menu:ClearAllPoints()
       menu:SetPoint("TOPLEFT", presetPickerBtn, "BOTTOMLEFT", 0, -2)
@@ -4628,25 +4692,67 @@ end
 -- 1-Second Polling Loop
 -- ============================================================================
 f:SetScript("OnUpdate", function()
-  local now = GetTime()
-  if state.pendingDeal and state.pendingDeal.stage == "confirm" then
-    local elapsed = now - (state.pendingDeal.confirmAt or now)
-    if elapsed >= 10 then
-      state.lastConfirmRem = nil
-      ClearPendingDeal()
+  local deal = state.pendingDeal
+  if deal then
+    local stg = deal.stage
+    if stg == "ready" then return end
+    local now = GetTime()
+    if stg == "confirming" then
+      local _, _, _, cTo = f._getCalibrated(now)
+      if (now - (deal.confirmSentAt or now)) >= cTo then
+        deal.endAt = now
+        if f._calBackoff then f._calBackoff("CONF_TO") end
+        if f._recordDealStat then f._recordDealStat(deal, "CONF_TO") end
+        if f._logEvent then f._logEvent("CONF_TO", deal.itemID, deal.qty, deal.unitPrice) end
+        state.lastPurchaseAttempt = nil
+        state.pauseScanUntil = 0
+        ClearPendingDeal(false, false)
+        state.queryInFlight = false
+        state.lastRespAt = 0
+        state.lastQueryAt = 0
+        TryInstantNextQuery()
+      end
       return
     end
-    local rem = math.max(0, math.ceil(10 - elapsed))
-    if state.lastConfirmRem ~= rem then
-      state.lastConfirmRem = rem
-      RefreshBuyButtonText()
+    if stg == "confirm" then
+      local elapsed = now - (deal.confirmAt or now)
+      if not deal.quoteReady then
+        local _, _, qTo = f._getCalibrated(now)
+        if elapsed >= qTo then
+          deal.endAt = now
+          if f._calBackoff then f._calBackoff("QUOTE_TO") end
+          if f._recordDealStat then f._recordDealStat(deal, "QUOTE_TO") end
+          if f._logEvent then f._logEvent("QUOTE_TO", deal.itemID, deal.qty, deal.unitPrice) end
+          state.lastConfirmRem = nil
+          state.pauseScanUntil = 0
+          ClearPendingDeal(false, true)
+          state.queryInFlight = false
+          state.lastRespAt = 0
+          state.lastQueryAt = 0
+          TryInstantNextQuery()
+          return
+        end
+      end
+      if elapsed >= 10 then
+        state.lastConfirmRem = nil
+        ClearPendingDeal(false, true)
+        return
+      end
+      local rem = math.max(0, math.ceil(10 - elapsed))
+      if state.lastConfirmRem ~= rem then
+        state.lastConfirmRem = rem
+        if f._updateConfirmCountdown then f._updateConfirmCountdown(rem) else RefreshBuyButtonText() end
+      end
+      return
     end
     return
   end
   state.lastConfirmRem = nil
-  if state.ahOpen and AuctionHouseFrame and not AuctionHouseFrame:IsShown() then
+  if not state.ahOpen then return end
+  if AuctionHouseFrame and not AuctionHouseFrame:IsShown() then
     state.ahOpen = false
     ForeverSniperDB.autoScan = false
+    state.queryInFlight = false
     if f.presetMenu then f.presetMenu:Hide() end
     ClearPendingDeal()
     UpdateStatus()
@@ -4654,12 +4760,17 @@ f:SetScript("OnUpdate", function()
     f:Hide()
     return
   end
-  if not state.ahOpen or not ForeverSniperDB.autoScan then return end
+  if not ForeverSniperDB.autoScan then return end
+  local now = GetTime()
   if now < (state.pauseScanUntil or 0) then return end
-  -- Stop sending search queries as soon as a deal is found so AH throttle stays 100% free for instant purchase
-  if state.pendingDeal then return end
-  local effInt = (state.scanMode == "scanner") and math.max(0.55, state.queryInterval or 0.55) or (state.queryInterval or 0.25)
-  if now - state.lastQueryAt < effInt then return end
+  if state.queryInFlight then
+    local inFlightTo = math.max(1.2, ((state.avgRttMs or 150) / 1000) * 3.0 + 0.5)
+    if (now - (state.querySentAt or 0)) < inFlightTo then return end
+    state.queryInFlight = false
+  end
+  local breathSec, minInt = f._getCalibrated(now)
+  if (now - (state.lastRespAt or 0)) < breathSec then return end
+  if (now - (state.lastQueryAt or 0)) < minInt then return end
   SendTargetQuery()
 end)
 
@@ -4668,18 +4779,24 @@ end)
 -- ============================================================================
 RefreshOverrideBindings = function()
   if InCombatLockdown and InCombatLockdown() then return end
-  if not ClearOverrideBindings or not SetOverrideBindingClick then return end
+  if not ClearOverrideBindings then return end
   ClearOverrideBindings(f)
   if state.ahOpen and f:IsShown() and GetBindingKey then
     local k1, k2 = GetBindingKey("FOREVERSNIPER_BUY")
-    if k1 and k1 ~= "" then SetOverrideBindingClick(f, true, k1, "ForeverSniperBuyBtn", "LeftButton") end
-    if k2 and k2 ~= "" then SetOverrideBindingClick(f, true, k2, "ForeverSniperBuyBtn", "LeftButton") end
+    if SetOverrideBinding then
+      if k1 and k1 ~= "" then SetOverrideBinding(f, true, k1, "FOREVERSNIPER_BUY") end
+      if k2 and k2 ~= "" then SetOverrideBinding(f, true, k2, "FOREVERSNIPER_BUY") end
+    elseif SetOverrideBindingClick then
+      if k1 and k1 ~= "" then SetOverrideBindingClick(f, true, k1, "ForeverSniperBuyBtn", "LeftButton") end
+      if k2 and k2 ~= "" then SetOverrideBindingClick(f, true, k2, "ForeverSniperBuyBtn", "LeftButton") end
+    end
   end
 end
 
 local function HandleBuyMouseWheel(delta)
-  if not state.ahOpen or not state.pendingDeal or not GetBindingKey then return false end
-  local k1, k2 = GetBindingKey("FOREVERSNIPER_BUY")
+  if not state.ahOpen or not state.pendingDeal then return false end
+  local k1, k2 = state.buyBindKey1, state.buyBindKey2
+  if not k1 and not k2 then return false end
   local wantUp = (delta > 0)
   local shift = IsShiftKeyDown and IsShiftKeyDown()
   local ctrl = IsControlKeyDown and IsControlKeyDown()
@@ -4848,13 +4965,20 @@ local function TryInstantNextQuery()
   if not state.ahOpen or not ForeverSniperDB.autoScan or state.pendingDeal then return end
   local now = GetTime()
   if now < (state.pauseScanUntil or 0) then return end
-  local effInt = (state.scanMode == "scanner") and math.max(0.55, state.queryInterval or 0.55) or (state.queryInterval or 0.25)
-  if now - (state.lastQueryAt or 0) < effInt then return end
+  if state.queryInFlight then
+    local inFlightTo = math.max(1.2, ((state.avgRttMs or 150) / 1000) * 3.0 + 0.5)
+    if (now - (state.querySentAt or 0)) < inFlightTo then return end
+    state.queryInFlight = false
+  end
+  local breathSec, minInt = f._getCalibrated(now)
+  if (now - (state.lastRespAt or 0)) < breathSec then return end
+  if (now - (state.lastQueryAt or 0)) < minInt then return end
   if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then return end
   SendTargetQuery()
 end
 
 f:RegisterEvent("PLAYER_LOGIN")
+f:RegisterEvent("PLAYER_REGEN_ENABLED")
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("UPDATE_BINDINGS")
 f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
@@ -4872,10 +4996,21 @@ pcall(f.RegisterEvent, f, "COMMODITY_PRICE_UPDATED")
 pcall(f.RegisterEvent, f, "COMMODITY_PRICE_UNAVAILABLE")
 f:RegisterEvent("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
 f:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+f:RegisterEvent("UI_ERROR_MESSAGE")
 
 f:SetScript("OnEvent", function(_, event, arg1, arg2)
   if event == "PLAYER_LOGIN" then
     EnsureBackgroundSoundCVar()
+    if f._loadCalSnapshot then f._loadCalSnapshot() end
+    -- Prune telemetry.days older than 90 days to keep SavedVariables lean
+    if ForeverSniperDB and ForeverSniperDB.telemetry and ForeverSniperDB.telemetry.days and date and time then
+      local cutoff = date("%Y-%m-%d", time() - 90 * 86400)
+      for dk in pairs(ForeverSniperDB.telemetry.days) do
+        if type(dk) == "string" and dk < cutoff then
+          ForeverSniperDB.telemetry.days[dk] = nil
+        end
+      end
+    end
     RefreshBuyHotkeyCache()
     RefreshSoundBtn()
     if f._refreshSkip1Btn then f._refreshSkip1Btn() end
@@ -4888,9 +5023,16 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     HookAuctionHouseFrame()
     UpdateStatus()
     SyncInputsFromSelected()
+    if f._refreshLiveStrip then f._refreshLiveStrip() end
     print("|cfff59e0bGoblin Broker:|r загружен! Откройте АХ или нажмите значок на миникарте (|cffffffff/gbroker|r)")
-  elseif event == "ADDON_LOADED" and arg1 == "Blizzard_AuctionHouseUI" then
-    HookAuctionHouseFrame()
+  elseif event == "PLAYER_REGEN_ENABLED" then
+    RefreshOverrideBindings()
+  elseif event == "ADDON_LOADED" then
+    if arg1 == ADDON_NAME then
+      EnsureDBDefaults()
+    elseif arg1 == "Blizzard_AuctionHouseUI" then
+      HookAuctionHouseFrame()
+    end
   elseif event == "UPDATE_BINDINGS" then
     RefreshBuyHotkeyCache()
     RefreshBuyButtonText()
@@ -4899,7 +5041,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       f._baitModal.RefreshHotkey()
     end
   elseif event == "GET_ITEM_INFO_RECEIVED" then
-    if f:IsShown() then RenderWatchlist() end
+    if f:IsShown() and not ForeverSniperDB.miniMode and arg1 and ForeverSniperDB.watchlist[arg1] then RenderWatchlist() end
     if f._baitModal and f._baitModal:IsShown() and f._renderBaitList then f._renderBaitList() end
   elseif event == "BAG_UPDATE_DELAYED" then
     if f._baitModal and f._baitModal:IsShown() and f._renderBaitList then f._renderBaitList() end
@@ -4909,17 +5051,53 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if f._sales and f._sales.onOwnedAuctionsUpdated then f._sales.onOwnedAuctionsUpdated() end
   elseif event == "CHAT_MSG_SYSTEM" then
     if f._sales and f._sales.onSystemChat then f._sales.onSystemChat(arg1) end
+  elseif event == "UI_ERROR_MESSAGE" then
+    if (state.pendingDeal or state.lastPurchaseAttempt) and type(arg2) == "string" then
+      local dbErr = ERR_AUCTION_DATABASE_ERROR
+      if (dbErr and arg2 == dbErr) or arg2:find("ошибка аукциона", 1, true) or arg2:find("Internal Auction Error", 1, true) then
+        local d = state.pendingDeal or state.lastPurchaseAttempt
+        local wasCommodityConfirm = state.pendingDeal and state.pendingDeal.isCommodity and (state.pendingDeal.stage == "confirm" or state.pendingDeal.stage == "confirming")
+        if d and d.itemID then
+          if f._recordAhError then f._recordAhError(d.itemID, d.name, d.qty) end
+          if f._logEvent then f._logEvent("AH_ERR", d.itemID, d.qty, d.unitPrice or 0, "stage=" .. tostring(state.pendingDeal and state.pendingDeal.stage or "attempt")) end
+          local dRef = state.pendingDeal or (state.lastPurchaseAttempt and state.lastPurchaseAttempt.dealRef)
+          if dRef then dRef.endAt = GetTime(); if f._recordDealStat then f._recordDealStat(dRef, "AH_ERR") end end
+          if (d.qty or 1) > 1 then
+            state.softChunkCap = state.softChunkCap or {}
+            state.softChunkCap[d.itemID] = { cap = math.max(1, math.floor((d.qty or 2) / 2)), expiresAt = GetTime() + 4.0 }
+          end
+        end
+        state.lastPurchaseAttempt = nil
+        state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eОшибка АХ (конфликт/частичный выкуп) — перескан...|r"
+        RefreshSessionBar()
+        state.pauseScanUntil = 0
+        ClearPendingDeal(false, wasCommodityConfirm)
+        state.queryInFlight = false
+        state.lastRespAt = 0
+        state.lastQueryAt = 0
+        TryInstantNextQuery()
+      end
+    end
   elseif event == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
     state.throttled = true
-    state.cleanQueryStreak = 0
-    state.queryInterval = math.min(0.50, (state.queryInterval or 0.25) + 0.05)
-    if state.pendingDeal and state.pendingDeal.stage == "confirm" then
+    state.queryInFlight = false
+    if f._calBackoff then f._calBackoff("THROTTLE") end
+    if state.pendingDeal and state.pendingDeal.stage == "confirming" then
+      -- Confirm packet was dropped by AH throttle; revert to confirm so user can re-confirm immediately
+      if f._logEvent then f._logEvent("THROTTLE_CONF", state.pendingDeal.itemID, state.pendingDeal.qty, state.pendingDeal.unitPrice) end
+      state.pendingDeal.stage = "confirm"
+      state.lastPurchaseAttempt = nil
+      RefreshBuyButtonText()
+      dealBadge:SetText("|cfff59e0bТРОТТЛИНГ АХ — ЖМИТЕ ПОДТВЕРДИТЬ СНОВА|r")
+    elseif state.pendingDeal and state.pendingDeal.stage == "confirm" and not state.pendingDeal.quoteReady then
       -- Reservation packet was dropped by AH throttle; revert to ready so user can re-send cleanly
+      if f._logEvent then f._logEvent("THROTTLE", state.pendingDeal.itemID, state.pendingDeal.qty, state.pendingDeal.unitPrice) end
       state.pendingDeal.stage = "ready"
       RefreshBuyButtonText()
       dealBadge:SetText("|cfff59e0bТРОТТЛИНГ АХ — НАЖМИТЕ КУПИТЬ СНОВА|r")
     end
-    UpdateStatus()
+    statusText:SetText(DOT_AMBER .. " |cfff59e0bПауза АХ...|r")
+    statusPill:SetBackdropBorderColor(0.96, 0.62, 0.04, 0.7)
   elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
     if state.throttled then
       state.throttled = false
@@ -4940,12 +5118,14 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       dealBadge:SetText(DOT_GREEN .. " |cff10b981ГОТОВО - ЖМИТЕ КУПИТЬ|r")
     end
     if GetTime() >= (state.pauseScanUntil or 0) then
-      if state.scanMode ~= "scanner" then state.lastQueryAt = 0 end -- Fire next query immediately in Sniper mode when throttle bucket frees
       TryInstantNextQuery()
     end
   elseif event == "AUCTION_HOUSE_SHOW" then
     state.ahOpen = true
     state.throttled = false
+    state.queryInFlight = false
+    state.pendingBaitConfirmID = nil
+    state.lastPurchaseAttempt = nil
     HookAuctionHouseFrame()
     f:Show()
     UpdateStatus()
@@ -4954,9 +5134,10 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if f._baitModal and f._baitModal:IsShown() and f._renderBaitList then f._renderBaitList() end
   elseif event == "AUCTION_HOUSE_CLOSED" then
     state.ahOpen = false
+    state.queryInFlight = false
     state.pendingBaitConfirmID = nil
     ForeverSniperDB.autoScan = false
-    if f.presetMenu then f.presetMenu:Hide() end
+    if f._closePopovers then f._closePopovers() end
     if f._baitModal and f._baitModal:IsShown() then f._baitModal:Hide() end
     ClearPendingDeal()
     UpdateStatus()
@@ -4968,94 +5149,158 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       local unitP = tonumber(arg1)
       local totP = tonumber(arg2)
       local effUnit = (unitP and unitP > 0) and unitP or ((totP and totP > 0 and (deal.qty or 1) > 0) and math.ceil(totP / math.max(1, deal.qty or 1)) or nil)
-      if effUnit and deal.maxPrice and effUnit > deal.maxPrice then
-        state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЦена выросла выше лимита — отмена|r"
+      if (effUnit and deal.maxPrice and effUnit > deal.maxPrice) or (totP and totP > 0 and GetMoney and totP > (GetMoney() or 0)) then
+        deal.endAt = GetTime()
+        if f._recordDealStat then f._recordDealStat(deal, "OVER_LIMIT", effUnit or totP) end
+        if f._logEvent then f._logEvent("OVER_LIMIT", deal.itemID, deal.qty, effUnit or totP) end
+        state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЦена выросла или не хватает золота — отмена|r"
         RefreshSessionBar()
         state.pauseScanUntil = 0
-        ClearPendingDeal(false, false)
+        ClearPendingDeal(false, true)
+        state.queryInFlight = false
+        state.lastRespAt = 0
         state.lastQueryAt = 0
         TryInstantNextQuery()
         return
       end
+      deal.quotedTotal = totP
       local wasReady = deal.quoteReady
       deal.quoteReady = true
+      if not wasReady then deal.quoteAt = GetTime() end
       if deal.confirmAt then
         state.lastQuoteMs = math.max(1, math.floor((GetTime() - deal.confirmAt) * 1000 + 0.5))
+        if not wasReady and f._calQuote then f._calQuote(state.lastQuoteMs) end
       end
       deal.waitBadgeShown = false
       deal.throttleBadgeShown = false
-      dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+      if f._flashQuoteReady then
+        f._flashQuoteReady()
+      else
+        dealBadge:SetText(DOT_GREEN .. " |cff10b981БРОНЬ ГОТОВА - ЖМИТЕ ПОДТВЕРДИТЬ!|r")
+      end
       if not wasReady and IsSoundEnabled() and PlaySound then
         pcall(PlaySound, 8959, "Master")
       end
+      if not wasReady and f._logEvent then f._logEvent("QUOTE", deal.itemID, deal.qty, totP or deal.unitPrice, state.lastQuoteMs and ("ms=" .. state.lastQuoteMs) or nil) end
     end
   elseif event == "COMMODITY_PRICE_UNAVAILABLE" then
-    if state.pendingDeal and state.pendingDeal.stage == "confirm" then
+    if state.pendingDeal and (state.pendingDeal.stage == "confirm" or state.pendingDeal.stage == "confirming") then
+      local d = state.pendingDeal
+      d.endAt = GetTime()
+      if f._recordDealStat then f._recordDealStat(d, "UNAVAIL") end
+      RecordTelemetryMiss(d.itemID, d.name, d.qty)
+      if f._logEvent then f._logEvent("UNAVAIL", d.itemID, d.qty, d.unitPrice) end
+      state.lastPurchaseAttempt = nil
       state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот уже раскупили - перескан...|r"
       RefreshSessionBar()
       state.pauseScanUntil = 0
       ClearPendingDeal()
+      state.queryInFlight = false
+      state.lastRespAt = 0
       state.lastQueryAt = 0
       TryInstantNextQuery()
     end
   elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then
     local att = state.lastPurchaseAttempt
+    state.lastPurchaseAttempt = nil
+    -- Fire next scan FIRST if not paused by qtyLimit, then run UI/telemetry redraws
+    state.pendingDeal = nil
+    state.pauseScanUntil = 0
+    state.queryInFlight = false
+    state.lastRespAt = 0
+    state.lastQueryAt = 0
     if att then
-      state.lastPurchaseAttempt = nil
+      if state.softChunkCap and att.itemID then state.softChunkCap[att.itemID] = nil end
+      if att.dealRef then
+        att.dealRef.endAt = GetTime()
+        if att.dealRef.confirmSentAt and f._calConfirm then f._calConfirm(math.floor((att.dealRef.endAt - att.dealRef.confirmSentAt) * 1000 + 0.5)) end
+        if f._recordDealStat then f._recordDealStat(att.dealRef, "WIN") end
+      end
+      if f._logEvent then f._logEvent("WIN", att.itemID, att.qty, att.totalCost) end
       RecordCompletedPurchase(att)
     end
+    TryInstantNextQuery()
+    ClearPendingDeal(false, false)
+  elseif event == "COMMODITY_PURCHASE_FAILED" then
+    local missAtt = state.lastPurchaseAttempt
+    state.lastPurchaseAttempt = nil
+    state.pendingDeal = nil
     state.pauseScanUntil = 0
+    state.queryInFlight = false
+    state.lastRespAt = 0
     state.lastQueryAt = 0
     TryInstantNextQuery()
-  elseif event == "COMMODITY_PURCHASE_FAILED" then
-    if state.lastPurchaseAttempt then
-      local missAtt = state.lastPurchaseAttempt
-      state.lastPurchaseAttempt = nil
-      RecordTelemetryMiss(missAtt.itemID, missAtt.name)
+    if missAtt then
+      if missAtt.dealRef then
+        missAtt.dealRef.endAt = GetTime()
+        if missAtt.dealRef.confirmSentAt and f._calConfirm then f._calConfirm(math.floor((missAtt.dealRef.endAt - missAtt.dealRef.confirmSentAt) * 1000 + 0.5)) end
+        if f._recordDealStat then f._recordDealStat(missAtt.dealRef, "MISS") end
+      end
+      RecordTelemetryMiss(missAtt.itemID, missAtt.name, missAtt.qty)
+      if f._logEvent then f._logEvent("MISS", missAtt.itemID, missAtt.qty, missAtt.totalCost) end
       state.sessionBuys.lastOutcome = DOT_RED .. " |cfff43f5eЛот перехвачен - перескан...|r"
       RefreshSessionBar()
     end
-    state.pauseScanUntil = 0
-    state.lastQueryAt = 0
-    TryInstantNextQuery()
+    ClearPendingDeal(false, false)
   elseif event == "COMMODITY_SEARCH_RESULTS_UPDATED" and arg1 then
-    if (state.lastQueryAt or 0) > 0 then
-      local rtt = math.floor((GetTime() - state.lastQueryAt) * 1000 + 0.5)
-      if rtt >= 1 and rtt <= 2000 then
-        state.avgRttMs = state.avgRttMs and math.floor(state.avgRttMs * 0.7 + rtt * 0.3 + 0.5) or rtt
-      end
-    end
     local itemID = tonumber(arg1)
+    if state.queryInFlight and (state.querySentAt or 0) > 0 and (not state.queryItemID or itemID == state.queryItemID) then
+      local respNow = GetTime()
+      local rtt = math.floor((respNow - state.querySentAt) * 1000 + 0.5)
+      state.queryInFlight = false
+      state.lastRespAt = respNow
+      if f._calScanRtt then f._calScanRtt(rtt) end
+    end
     if state.scanMode == "scanner" and itemID and ForeverSniperDB.watchlist[itemID] then
       if NS.OnScannerCommodity then NS.OnScannerCommodity(itemID) end
-      if logFrame:IsShown() and logTab == "liquidity" then RenderLogFrame() end
       TryInstantNextQuery()
+      if f._radarBox and f._radarBox:IsShown() and NS.RenderInlineRadar then
+        local nowDraw = GetTime()
+        if not state.lastLiqDrawAt or (nowDraw - state.lastLiqDrawAt) >= 0.8 then
+          state.lastLiqDrawAt = nowDraw
+          NS.RenderInlineRadar()
+        end
+      end
       return
     end
     if not itemID or not IsItemTracked(itemID) then return end
     local maxPrice = ForeverSniperDB.watchlist[itemID]
     if not maxPrice then return end
-    if state.pendingDeal and (state.pendingDeal.stage == "confirm" or state.pendingDeal.itemID ~= itemID) then return end
+    if state.pendingDeal and (state.pendingDeal.stage == "confirm" or state.pendingDeal.stage == "confirming" or state.pendingDeal.stage == "ready" or state.pendingDeal.itemID ~= itemID) then return end
 
     local num = C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 0
     local totalAvail = 0
     local minUnitPrice = nil
     local lowestSeen = nil
+    local hitOwnerAt = nil
     tierCount = 0
     for i = 1, num do
       local res = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
-      if res and res.unitPrice and res.unitPrice > 0 and not res.containsOwnerItem then
+      if res and res.unitPrice and res.unitPrice > 0 then
+        local q = res.quantity or 0
+        if res.containsOwnerItem then
+          local ownerQ = res.numOwnerItems or 0
+          local nonOwnerQ = (ownerQ > 0) and math.max(0, q - ownerQ) or 0
+          if nonOwnerQ <= 0 then
+            if not lowestSeen or res.unitPrice < lowestSeen then lowestSeen = res.unitPrice end
+            if res.unitPrice <= maxPrice then hitOwnerAt = res.unitPrice end
+            break
+          end
+          -- Shared tier (e.g. your 1pc bait + another seller's stack at the exact same price)
+          q = nonOwnerQ
+        end
         if not lowestSeen or res.unitPrice < lowestSeen then lowestSeen = res.unitPrice end
         if res.unitPrice <= maxPrice then
           if not minUnitPrice or res.unitPrice < minUnitPrice then
             minUnitPrice = res.unitPrice
           end
-          local q = res.quantity or 0
           if q > 0 then
             totalAvail = totalAvail + q
             tierCount = tierCount + 1
             tierPrices[tierCount] = res.unitPrice
             tierQtys[tierCount] = q
+            -- Sniper buys strictly tier 1 (cheapest price tier), so stop reading deeper tiers to avoid GC
+            break
           end
         else
           -- Results are sorted ascending by price (PRICE_SORTS)
@@ -5077,15 +5322,22 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     end
 
     local minDealQty = ForeverSniperDB.skipSingleBait and 2 or 1
-    if minUnitPrice and totalAvail >= minDealQty then
+    local tier1Qty = (tierCount >= 1 and tierQtys[1] and tierQtys[1] > 0) and tierQtys[1] or totalAvail
+    local baseCap = GetBaseQtyCap(itemID)
+    local preCap = GetQtyCap(itemID)
+    local isCapExhausted = (baseCap > 0 and preCap <= 0)
+    if minUnitPrice and tier1Qty >= minDealQty and not isCapExhausted then
       local _, cachedName = GetItemVisuals(itemID)
-      local preCap = GetQtyCap(itemID)
-      local preMax = (preCap > 0) and math.min(totalAvail, preCap) or totalAvail
+      local preMax = (baseCap > 0) and math.min(tier1Qty, preCap) or tier1Qty
+      local sc = state.softChunkCap and state.softChunkCap[itemID]
+      if sc and sc.expiresAt > GetTime() and sc.cap and sc.cap < preMax then
+        preMax = math.max(1, sc.cap)
+      end
       local dealObj = {
         itemID = itemID,
         isCommodity = true,
         unitPrice = minUnitPrice,
-        qty = totalAvail,
+        qty = tier1Qty,
         cap = preCap,
         maxPrice = maxPrice,
         name = cachedName,
@@ -5095,54 +5347,46 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
       dealObj.chosenQty = f._getAffordableQty and f._getAffordableQty(dealObj, preMax) or math.max(1, preMax)
       SetPendingDeal(dealObj)
     else
+      -- Passive liquidity sample runs even when price is steady (rate-limited to 15s/item inside OnPassiveSample)
+      if not state.pendingDeal and NS.OnPassiveSample then NS.OnPassiveSample(itemID, true, nil) end
       -- Fast zero-redraw exit when no deal is active and this item's state hasn't changed
       if not state.pendingDeal and prevSeen and prevLowest == lowestSeen and prevAvail == 0 then
         TryInstantNextQuery()
         return
       end
+      -- Send next AH query FIRST before UI redraws so main-thread UI work never delays scanning
+      state.pendingDeal = nil
+      TryInstantNextQuery()
       ClearPendingDeal(true)
       state.lastDisplayedDealItem = itemID
-      RenderWatchlist()
-      if lowestSeen then
-        local _, overNm = GetItemVisuals(itemID)
-        local diff = math.max(0, lowestSeen - maxPrice)
-        local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
-        dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
-        dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r  |cff94a3b8·|r  |cfff8fafc" .. overNm .. "|r")
-        dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
-        dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
-        dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))
-        dealMeta:SetText("|cff94a3b8Ваш лимит:|r " .. FormatCoins(maxPrice))
-        dealTotalRight:SetText(string.format("|cfff59e0b(+%d%%)|r", overPct))
-      else
-        dealTitle:SetText("|cff94a3b8Лоты по этому предмету не найдены|r")
-        dealDelta:SetText("")
-        dealMeta:SetText("")
-        dealQtyRight:SetText("")
-        dealTotalRight:SetText("")
-      end
-      TryInstantNextQuery()
+      if f._updateWatchlistRowLive then f._updateWatchlistRowLive(itemID) else RenderWatchlist() end
+      f._showNoDealCard(itemID, hitOwnerAt, lowestSeen, maxPrice)
     end
-    if not state.pendingDeal and NS.OnPassiveSample then NS.OnPassiveSample(itemID, true, nil) end
   elseif event == "ITEM_SEARCH_RESULTS_UPDATED" and arg1 then
-    if (state.lastQueryAt or 0) > 0 then
-      local rtt = math.floor((GetTime() - state.lastQueryAt) * 1000 + 0.5)
-      if rtt >= 1 and rtt <= 2000 then
-        state.avgRttMs = state.avgRttMs and math.floor(state.avgRttMs * 0.7 + rtt * 0.3 + 0.5) or rtt
-      end
+    local itemID = type(arg1) == "table" and arg1.itemID or tonumber(arg1)
+    if state.queryInFlight and (state.querySentAt or 0) > 0 and (not state.queryItemID or itemID == state.queryItemID) then
+      local respNow = GetTime()
+      local rtt = math.floor((respNow - state.querySentAt) * 1000 + 0.5)
+      state.queryInFlight = false
+      state.lastRespAt = respNow
+      if f._calScanRtt then f._calScanRtt(rtt) end
     end
-    local itemID = arg1.itemID
     if state.scanMode == "scanner" and itemID and ForeverSniperDB.watchlist[itemID] then
       if NS.OnScannerItem then NS.OnScannerItem(arg1, itemID) end
-      if logFrame:IsShown() and logTab == "liquidity" then RenderLogFrame() end
       TryInstantNextQuery()
+      if f._radarBox and f._radarBox:IsShown() and NS.RenderInlineRadar then
+        local nowDraw = GetTime()
+        if not state.lastLiqDrawAt or (nowDraw - state.lastLiqDrawAt) >= 0.8 then
+          state.lastLiqDrawAt = nowDraw
+          NS.RenderInlineRadar()
+        end
+      end
       return
     end
     if not itemID or not IsItemTracked(itemID) then return end
     local maxPrice = itemID and ForeverSniperDB.watchlist[itemID]
     if not maxPrice then return end
-    if state.pendingDeal and (state.pendingDeal.stage == "confirm" or state.pendingDeal.itemID ~= itemID) then return end
+    if state.pendingDeal and (state.pendingDeal.stage == "confirm" or state.pendingDeal.stage == "confirming" or state.pendingDeal.stage == "ready" or state.pendingDeal.itemID ~= itemID) then return end
 
     local num = C_AuctionHouse.GetNumItemSearchResults(arg1) or 0
     local found = false
@@ -5195,39 +5439,27 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
         TryInstantNextQuery()
         return
       end
-      RenderWatchlist()
+      state.pendingDeal = nil
+      TryInstantNextQuery()
+      if f._updateWatchlistRowLive then f._updateWatchlistRowLive(itemID) else RenderWatchlist() end
     end
     if not found then
       ClearPendingDeal(true)
       state.lastDisplayedDealItem = itemID
-      if lowestSeen then
-        local _, overNm = GetItemVisuals(itemID)
-        local diff = math.max(0, lowestSeen - maxPrice)
-        local overPct = (maxPrice > 0) and math.floor((diff / maxPrice) * 100 + 0.5) or 0
-        dealStripe:SetColorTexture(0.96, 0.45, 0.08, 1)
-        dealCard:SetBackdropBorderColor(0.96, 0.45, 0.08, 0.65)
-        dealBadge:SetText(DOT_AMBER .. " |cfff59e0bЦЕНА ВЫШЕ ЛИМИТА|r  |cff94a3b8·|r  |cfff8fafc" .. overNm .. "|r")
-        dealDelta:SetText("|cff94a3b8Ожидание снижения...|r")
-        dealTitle:SetText("|cffcbd5e1Мин. АХ:|r " .. FormatCoins(lowestSeen))
-        dealQtyRight:SetText(string.format("|cfff43f5e+%s|r", FormatCoinsPlain(diff)))
-        dealMeta:SetText("|cff94a3b8Ваш лимит:|r " .. FormatCoins(maxPrice))
-        dealTotalRight:SetText(string.format("|cfff59e0b(+%d%%)|r", overPct))
-      else
-        dealTitle:SetText("|cff94a3b8Лоты по этому предмету не найдены|r")
-        dealDelta:SetText("")
-        dealMeta:SetText("")
-        dealQtyRight:SetText("")
-        dealTotalRight:SetText("")
-      end
+      f._showNoDealCard(itemID, nil, lowestSeen, maxPrice)
       TryInstantNextQuery()
     end
     if not state.pendingDeal and NS.OnPassiveSample then NS.OnPassiveSample(itemID, false, arg1) end
   end
 end)
 
--- Export shared references for MarketScanner.lua
+-- Export shared references for Calibrator.lua & MarketScanner.lua
 NS.f = f
 NS.state = state
+NS.EnsureTelemetryDB = EnsureTelemetryDB
+NS.TodayKey = TodayKey
+NS.HourKey = HourKey
+NS.TouchHourBucket = TouchHourBucket
 NS.toolRail = toolRail
 NS.miniBtn = miniBtn
 NS.soundBtn = soundBtn
@@ -5244,13 +5476,84 @@ NS.tabSalesBtn = f._tabSalesBtn
 NS.RenderLogFrame = RenderLogFrame
 NS.SetLogTab = function(t) logTab = t; RenderLogFrame() end
 NS.CreateFlatButton = CreateFlatButton
+NS.StyleFlatBox = StyleFlatBox
+NS.AttachDropShadow = AttachDropShadow
 NS.FLAT_BACKDROP = FLAT_BACKDROP
+NS.ICON_GOLD = ICON_GOLD
+NS.ICON_SILVER = ICON_SILVER
+NS.ICON_COPPER = ICON_COPPER
 NS.dealCard = dealCard
 NS.dealStripe = dealStripe
 NS.dealBadge = dealBadge
 NS.dealTitle = dealTitle
 NS.dealDelta = dealDelta
+NS.dealMeta = dealMeta
+NS.hotkeyBtn = hotkeyBtn
+NS.wlBox = wlBox
+NS.SyncInputsFromSelected = SyncInputsFromSelected
+NS.OpenExportModal = OpenExportModal
+NS.SyncActivePresetSnapshot = SyncActivePresetSnapshot
+NS.RefreshBuyHotkeyCache = RefreshBuyHotkeyCache
+NS.RefreshBuyButtonText = RefreshBuyButtonText
+NS.RefreshOverrideBindings = RefreshOverrideBindings
+
+if UISpecialFrames then
+  table.insert(UISpecialFrames, "ForeverSniperLogFrame")
+  table.insert(UISpecialFrames, "ForeverSniperImportFrame")
+end
 
 SLASH_FOREVERSNIPER1 = "/fsniper"
 SLASH_FOREVERSNIPER2 = "/gbroker"
 SlashCmdList["FOREVERSNIPER"] = ToggleSniperWindow
+
+SLASH_FOREVERSNIPERLOG1 = "/gblog"
+SlashCmdList["FOREVERSNIPERLOG"] = function(msg)
+  if type(msg) == "string" and msg:lower():find("clear", 1, true) then
+    ForeverSniperDB.eventLog = { head = 0, entries = {} }
+    print("|cff10b981Goblin Broker [Лог]:|r журнал событий очищен.")
+    return
+  end
+  local lines = {}
+  if f._exportEventLogLines then f._exportEventLogLines(lines) end
+  if #lines == 0 then
+    print("|cff94a3b8Goblin Broker [Лог]:|r событий пока нет.")
+    return
+  end
+  if type(msg) == "string" and msg:lower():find("export", 1, true) then
+    OpenExportModal("Лог событий АХ (Ctrl+C)", table.concat(lines, "\n"))
+    return
+  end
+  print(string.format("|cfff59e0bGoblin Broker [Лог]:|r последние %d из %d (экспорт: |cffffffff/gblog export|r, сброс: |cffffffff/gblog clear|r):", math.min(15, #lines), #lines))
+  for i = math.max(1, #lines - 14), #lines do
+    print("  " .. lines[i])
+  end
+end
+
+SLASH_FOREVERSNIPERSTATS1 = "/gbstats"
+SlashCmdList["FOREVERSNIPERSTATS"] = function(msg)
+  if type(msg) == "string" and msg:lower():find("clear", 1, true) then
+    ForeverSniperDB.statDB = { head = 0, entries = {} }
+    print("|cff10b981Goblin Broker [Статистика]:|r база сделок очищена.")
+    return
+  end
+  local sb = ForeverSniperDB.statDB
+  local n = (sb and sb.entries) and #sb.entries or 0
+  if n == 0 then
+    print("|cff94a3b8Goblin Broker [Статистика]:|r записей пока нет (сделайте /reload после сделок — они сохранятся на диск).")
+    return
+  end
+  local w, m, ov, rSum, rCnt, qSum, qCnt, cSum, cCnt = 0, 0, 0, 0, 0, 0, 0, 0, 0
+  for i = 1, n do
+    local e = sb.entries[i]
+    if e then
+      if e.res == "WIN" then w = w + 1
+      elseif e.res == "MISS" then m = m + 1
+      elseif e.res == "OVER_LIMIT" then ov = ov + 1 end
+      if (e.reactMs or 0) > 0 then rSum = rSum + e.reactMs; rCnt = rCnt + 1 end
+      if (e.quoteMs or 0) > 0 then qSum = qSum + e.quoteMs; qCnt = qCnt + 1 end
+      if (e.confReactMs or 0) > 0 then cSum = cSum + e.confReactMs; cCnt = cCnt + 1 end
+    end
+  end
+  print(string.format("|cfff59e0bGoblin Broker [Статистика %d записей]:|r WIN=%d | MISS=%d | OVER_LIMIT=%d | Реакция START: %dмс | QUOTE: %dмс | Реакция CONFIRM: %dмс (сброс: /gbstats clear)",
+    n, w, m, ov, rCnt > 0 and math.floor(rSum / rCnt) or 0, qCnt > 0 and math.floor(qSum / qCnt) or 0, cCnt > 0 and math.floor(cSum / cCnt) or 0))
+end
