@@ -76,5 +76,7 @@ jobs:
           git add index.html ah_tracker.sqlite
           if ! git diff --cached --quiet; then
             git commit -m "chore: update AH snapshot $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git fetch origin gh-pages --depth=1
+            git rebase origin/gh-pages || true
             git push origin HEAD:gh-pages
           fi

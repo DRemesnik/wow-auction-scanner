@@ -1122,6 +1122,7 @@ def render_dashboard_html(data: dict) -> str:
           <span class="live-dot"></span>
           <span class="mono">{html.escape(str(snap_time)[:19].replace('T', ' '))} UTC</span>
         </div>
+        <div class="live-pill" id="addonLiveBadge" style="display:none; border-color:rgba(52,211,153,.45); background:rgba(16,185,129,.12); color:#34D399;" title="Живая телеметрия из аддона Goblin Broker: Forever"></div>
       </div>
     </header>
 
@@ -1362,14 +1363,28 @@ function drawDynamicsChart(item) {{
   pEl.className = "insp-v " + (item.craft_profit > 0 ? "pos" : item.craft_profit < 0 ? "neg" : "");
   document.getElementById("inspLiq").textContent = `${{item.liquidity}} (${{item.avail}} шт / ${{item.samples}} лот.)`;
 
+  window._activeInspectorItem = item;
   const legend = document.getElementById("chartLegend");
   const last = pts[pts.length - 1];
-  legend.innerHTML = last ? `
+  const liveParts = [];
+  if (item._live) {{
+    if (item._live.p1 > 0) liveParts.push(`<span style="color:#34D399;">● LIVE: <b class="mono">${{fmtCoinsHtml(item._live.p1)}}</b></span>`);
+    if (item._live.vDrain > 0) liveParts.push(`<span style="color:#34D399;">Выкуп/ч: <b class="mono">${{item._live.vDrain}}</b></span>`);
+    if (item._live.dips > 0) liveParts.push(`<span style="color:#FBBF24;">Просадки: <b class="mono">${{item._live.dips}}</b></span>`);
+    if (item._live.winRate != null) liveParts.push(`<span style="color:#38BDF8;">WR: <b class="mono">${{item._live.winRate}}%</b></span>`);
+  }}
+  if (item._sale && item._sale.avgSellNet > 0) {{
+    liveParts.push(`<span style="color:#A78BFA;">Почта (чист.): <b class="mono">${{fmtCoinsHtml(item._sale.avgSellNet)}}</b> (×${{item._sale.qty}})</span>`);
+  }}
+  const liveHtml = liveParts.length
+    ? `<span style="margin-left:8px;padding-left:8px;border-left:1px solid rgba(52,211,153,.35);display:inline-flex;gap:10px;flex-wrap:wrap;">${{liveParts.join("")}}</span>`
+    : "";
+  legend.innerHTML = (last ? `
     <span><span style="color:#00B4D8;">●</span> Мин: <b class="mono" style="color:var(--text);">${{fmtCoinsHtml(last[1])}}</b></span>
     <span><span style="color:#2AB86F;">●</span> P25: <b class="mono" style="color:var(--text);">${{fmtCoinsHtml(last[2])}}</b></span>
     <span><span style="color:#8B5CF6;">●</span> Мед: <b class="mono" style="color:var(--text);">${{fmtCoinsHtml(last[3])}}</b></span>
     <span><span style="color:#38BDF8;">▮</span> Ост: <b class="mono" style="color:var(--text);">${{last[4]}}</b></span>
-  ` : "";
+  ` : "") + liveHtml;
 
   const svg = document.getElementById("dynSvg");
   const tooltip = document.getElementById("chartTooltip");
@@ -1564,7 +1579,7 @@ function renderTable() {{
       <td class="mono num"><b style="color:${{it.score >= 65 ? 'var(--pos)' : it.score >= 45 ? 'var(--accent)' : 'var(--muted)'}}">${{it.score}}</b></td>
       <td>${{signalBadge(it.signal)}}</td>
       <td style="color:var(--muted);">${{it.liquidity}}</td>
-      <td class="mono num"><b>${{fmtCoinsHtml(it.current_min)}}</b></td>
+      <td class="mono num"><b>${{fmtCoinsHtml(it.current_min)}}</b>${{it._live && it._live.p1 > 0 ? `<span style="display:inline-block;margin-left:5px;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(16,185,129,.16);color:#34D399;border:1px solid rgba(52,211,153,.35);vertical-align:middle;" title="Живая цена из аддона${{it._live.vDrain ? ' · Выкуп/ч: ' + it._live.vDrain : ''}}${{it._live.dips ? ' · Просадки: ' + it._live.dips : ''}}">LIVE</span>` : ''}}</td>
       <td class="mono num" style="color:var(--muted);">${{fmtCoinsHtml(it.p25)}}</td>
       <td class="mono num" style="color:var(--muted);">${{fmtCoinsHtml(it.craft_cost)}}</td>
       <td class="num ${{it.craft_profit > 0 ? 'pos' : it.craft_profit < 0 ? 'neg' : 'mono'}}">${{fmtCoinsHtml(it.craft_profit)}}</td>
@@ -1816,6 +1831,63 @@ document.querySelectorAll(".quick-pill[data-id], .dt-bar-row[data-id]").forEach(
 }});
 
 renderTable();
+
+(function initLiveTelemetryOverlay() {{
+  if (!location.protocol.startsWith("http")) return;
+  let lastTs = 0;
+  const pullLive = async () => {{
+    try {{
+      const res = await fetch("./live_telemetry.json?_cb=" + Date.now(), {{ cache: "no-store" }});
+      if (!res.ok) return;
+      const payload = await res.json();
+      if (!payload || !payload.items) return;
+      if (payload.updated_ts && payload.updated_ts === lastTs) return;
+      lastTs = payload.updated_ts || Date.now();
+
+      const liveItems = payload.items || {{}};
+      const salesByName = payload.salesByName || {{}};
+      let matched = 0;
+
+      for (const it of ITEMS) {{
+        const lv = liveItems[String(it.item_id)];
+        if (lv) {{
+          it._live = lv;
+          if (lv.p1 > 0) {{
+            if (it._api_min == null) it._api_min = it.current_min;
+            it.current_min = lv.p1;
+            if (it.is_craftable && it.craft_cost > 0) {{
+              const profit = Math.floor(lv.p1 * 0.95) - it.craft_cost;
+              it.craft_profit = profit;
+              const roi = (profit / it.craft_cost) * 100;
+              it.roi = Math.round(roi * 10) / 10;
+              it.roi_fmt = (roi >= 0 ? "+" : "") + Math.round(roi) + "%";
+            }}
+            matched++;
+          }}
+        }}
+        const sale = salesByName[it.name_ru];
+        if (sale && sale.avgSellNet > 0) {{
+          it._sale = sale;
+        }}
+      }}
+
+      const badge = document.getElementById("addonLiveBadge");
+      if (badge && payload.updated_ts) {{
+        const ageMin = Math.max(0, Math.floor((Date.now() / 1000 - payload.updated_ts) / 60));
+        const ageTxt = ageMin < 1 ? "только что" : ageMin < 60 ? `${{ageMin}}м назад` : `${{Math.floor(ageMin / 60)}}ч назад`;
+        badge.innerHTML = `<span class="live-dot" style="background:#34D399;box-shadow:0 0 8px #34D399;"></span><span class="mono">ADDON LIVE · ${{matched}} поз. · ${{ageTxt}}</span>`;
+        badge.style.display = "inline-flex";
+      }}
+
+      renderTable();
+      if (window._activeInspectorItem) {{
+        drawDynamicsChart(window._activeInspectorItem);
+      }}
+    }} catch (_e) {{}}
+  }};
+  pullLive();
+  setInterval(pullLive, 60000);
+}})();
 
 if (location.protocol.startsWith("http")) {{
   const curMeta = document.querySelector('meta[name="app-build"]')?.content || "";
