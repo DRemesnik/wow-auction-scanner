@@ -577,14 +577,15 @@ closeBtn:SetScript("OnClick", function() f:Hide() end)
 
 -- Live Status Pill
 local statusPill = CreateFrame("Frame", nil, f, "BackdropTemplate")
-statusPill:SetSize(134, 26)
+statusPill:SetSize(148, 26)
 statusPill:SetPoint("RIGHT", closeBtn, "LEFT", -6, 0)
 statusPill:SetBackdrop(FLAT_BACKDROP)
 statusPill:SetBackdropColor(0.07, 0.10, 0.18, 1)
 statusPill:SetBackdropBorderColor(0.18, 0.25, 0.36, 1)
 
--- Top-Header Segmented Mode Switcher: [ Снайпер | Сканер ]
-do
+-- Scanner Mode UI disabled for v2.5.0.31 release (keep sniper-only clean header)
+state.scanMode = "sniper"
+if false then
   local seg = CreateFrame("Frame", nil, f, "BackdropTemplate")
   seg:SetSize(136, 26)
   seg:SetPoint("RIGHT", statusPill, "LEFT", -8, 0)

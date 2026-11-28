@@ -9,4 +9,3 @@ ForeverSniper.lua
 Calibrator.lua
 Bait.lua
 Keybinds.lua
-MarketScanner.lua
