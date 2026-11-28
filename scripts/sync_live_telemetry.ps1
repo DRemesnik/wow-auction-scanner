@@ -96,19 +96,45 @@ function Build-LiveTelemetry([string]$svPath) {
   foreach ($k in $marketRecs.Keys) { [void]$allIds.Add($k) }
   foreach ($k in $telRecs.Keys) { [void]$allIds.Add($k) }
 
+  $nowUtc = [DateTime]::UtcNow
+  $epoch = [int64](($nowUtc - [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)).TotalSeconds)
+  $fresh15m = 0
+  $stale1h = 0
+  $newestAge = $null
+  $oldestAge = $null
+
   foreach ($id in $allIds) {
     $out = @{}
     if ($marketRecs.ContainsKey($id)) {
       $m = $marketRecs[$id]
       if ($m.ContainsKey("p1")) { $out["p1"] = [int64]$m["p1"] }
+      if ($m.ContainsKey("q1")) { $out["q1"] = [int64]$m["q1"] }
       if ($m.ContainsKey("p2")) { $out["p2"] = [int64]$m["p2"] }
       if ($m.ContainsKey("wallQty")) { $out["wallQty"] = [int64]$m["wallQty"] }
+      if ($m.ContainsKey("wall10Qty")) { $out["wall10Qty"] = [int64]$m["wall10Qty"] }
+      if ($m.ContainsKey("wall15Qty")) { $out["wall15Qty"] = [int64]$m["wall15Qty"] }
+      if ($m.ContainsKey("resetCost15")) { $out["resetCost15"] = [int64]$m["resetCost15"] }
       if ($m.ContainsKey("totalDepth")) { $out["totalDepth"] = [int64]$m["totalDepth"] }
       if ($m.ContainsKey("spreadPct")) { $out["spreadPct"] = [math]::Round([double]$m["spreadPct"], 1) }
       if ($m.ContainsKey("vDrain")) { $out["vDrain"] = [math]::Round([double]$m["vDrain"], 1) }
       if ($m.ContainsKey("cls")) { $out["cls"] = [int]$m["cls"] }
+      if ($m.ContainsKey("sniperScore")) { $out["sniperScore"] = [int]$m["sniperScore"] }
+      if ($m.ContainsKey("confidence")) { $out["confidence"] = [int]$m["confidence"] }
+      if ($m.ContainsKey("dipCount") -and [int]$m["dipCount"] -gt 0) { $out["dipCount"] = [int]$m["dipCount"] }
+      if ($m.ContainsKey("dipDepthAvg") -and [double]$m["dipDepthAvg"] -gt 0) { $out["dipDepthAvg"] = [math]::Round([double]$m["dipDepthAvg"], 1) }
+      if ($m.ContainsKey("dipDurAvg") -and [double]$m["dipDurAvg"] -gt 0) { $out["dipDurAvg"] = [math]::Round([double]$m["dipDurAvg"], 1) }
+      if ($m.ContainsKey("reboundRatio") -and [double]$m["reboundRatio"] -gt 0) { $out["reboundRatio"] = [math]::Round([double]$m["reboundRatio"], 2) }
       if ($m.ContainsKey("scans")) { $out["scans"] = [int]$m["scans"] }
-      if ($m.ContainsKey("updatedAt")) { $out["updatedAt"] = [int64]$m["updatedAt"] }
+      if ($m.ContainsKey("updatedAt") -and [int64]$m["updatedAt"] -gt 0) {
+        $uTs = [int64]$m["updatedAt"]
+        $age = [math]::Max(0, $epoch - $uTs)
+        $out["updatedAt"] = $uTs
+        $out["ageSec"] = $age
+        if ($age -lt 900) { $fresh15m++ }
+        if ($age -ge 3600) { $stale1h++ }
+        if ($null -eq $newestAge -or $age -lt $newestAge) { $newestAge = $age }
+        if ($null -eq $oldestAge -or $age -gt $oldestAge) { $oldestAge = $age }
+      }
     }
     if ($telRecs.ContainsKey($id)) {
       $t = $telRecs[$id]
@@ -147,15 +173,19 @@ function Build-LiveTelemetry([string]$svPath) {
     }
   }
 
-  $nowUtc = [DateTime]::UtcNow
-  $epoch = [int64](($nowUtc - [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)).TotalSeconds)
   return @{
-    version      = 1
+    version      = 2
     source       = "ForeverSniper"
     updated_at   = $nowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")
     updated_ts   = $epoch
     items_count  = $items.Count
     sales_count  = $salesByName.Count
+    freshness    = @{
+      fresh_15m  = $fresh15m
+      stale_1h   = $stale1h
+      newest_sec = if ($null -ne $newestAge) { $newestAge } else { -1 }
+      oldest_sec = if ($null -ne $oldestAge) { $oldestAge } else { -1 }
+    }
     items        = $items
     salesByName  = $salesByName
   }

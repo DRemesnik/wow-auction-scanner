@@ -1372,6 +1372,14 @@ function drawDynamicsChart(item) {{
       const rows = [];
       if (item._live) {{
         const lv = item._live;
+        let freshBadge = "";
+        if (lv.updatedAt > 0) {{
+          const ageSec = Math.max(0, Math.floor(Date.now() / 1000) - lv.updatedAt);
+          if (ageSec < 120) freshBadge = ` <span class="mono" style="color:#10B981;font-weight:700;">· ${{ageSec}}с назад (LIVE)</span>`;
+          else if (ageSec < 900) freshBadge = ` <span class="mono" style="color:#38BDF8;">· ${{Math.floor(ageSec / 60)}}м назад</span>`;
+          else if (ageSec < 3600) freshBadge = ` <span class="mono" style="color:#F59E0B;">· ${{Math.floor(ageSec / 60)}}м назад (устаревают)</span>`;
+          else freshBadge = ` <span class="mono" style="color:#F43F5E;">· ${{Math.floor(ageSec / 3600)}}ч назад (старые)</span>`;
+        }}
         let deltaHtml = "";
         if (lv.p1 > 0 && item._api_min > 0) {{
           const dp = ((lv.p1 - item._api_min) / item._api_min) * 100;
@@ -1381,11 +1389,15 @@ function drawDynamicsChart(item) {{
           }}
         }}
         const p2Txt = lv.p2 && lv.p2 !== lv.p1 ? ` · 2-й ур.: <b class="mono">${{fmtCoinsHtml(lv.p2)}}</b>` : "";
-        if (lv.p1 > 0) rows.push(`<div><span style="color:#34D399;font-weight:700;">● LIVE АХ:</span> <b class="mono">${{fmtCoinsHtml(lv.p1)}}</b>${{deltaHtml}}${{p2Txt}}</div>`);
+        if (lv.p1 > 0) rows.push(`<div><span style="color:#34D399;font-weight:700;">● LIVE АХ:</span> <b class="mono">${{fmtCoinsHtml(lv.p1)}}</b>${{deltaHtml}}${{p2Txt}}${{freshBadge}}</div>`);
         const micro = [];
         if (lv.vDrain > 0) micro.push(`Выкуп/ч: <b class="mono" style="color:#34D399;">${{lv.vDrain}}</b>`);
-        if (lv.wallQty > 0) micro.push(`Стена: <b class="mono">${{lv.wallQty}}</b>/${{lv.totalDepth || lv.wallQty}}`);
-        if (lv.dips > 0) micro.push(`Просадки: <b class="mono" style="color:#FBBF24;">${{lv.dips}}</b>`);
+        if (lv.wallQty > 0) micro.push(`Стена +5%: <b class="mono">${{lv.wallQty}}</b>/${{lv.totalDepth || lv.wallQty}}`);
+        if (lv.resetCost15 > 0) micro.push(`Ресет +15%: <b class="mono" style="color:#F59E0B;">${{fmtCoinsHtml(lv.resetCost15)}}</b>`);
+        if (lv.sniperScore > 0) micro.push(`Sniper: <b class="mono" style="color:#38BDF8;">${{lv.sniperScore}}/100</b>`);
+        if (lv.confidence > 0) micro.push(`Надёжность: <b class="mono" style="color:${{lv.confidence >= 75 ? '#34D399' : '#F59E0B'}};">${{lv.confidence}}%</b>`);
+        if (lv.dipCount > 0) micro.push(`Просадки: <b class="mono" style="color:#FBBF24;">${{lv.dipCount}}</b> (-${{lv.dipDepthAvg || 0}}% · ${{lv.dipDurAvg || 0}}с)`);
+        else if (lv.dips > 0) micro.push(`Просадки: <b class="mono" style="color:#FBBF24;">${{lv.dips}}</b>`);
         if (lv.winRate != null) micro.push(`WR: <b class="mono" style="color:#38BDF8;">${{lv.winRate}}%</b>`);
         if (lv.scans > 0) micro.push(`Сканов: <b class="mono">${{lv.scans}}</b>`);
         if (micro.length) rows.push(`<div style="color:var(--muted);">${{micro.join(" · ")}}</div>`);
@@ -1885,11 +1897,24 @@ renderTable();
 (function initLiveTelemetryOverlay() {{
   if (!location.protocol.startsWith("http")) return;
   let lastTs = 0;
+  const LIVE_ENDPOINTS = [
+    "https://goblin-broker-telemetry.d-remesnik-au.workers.dev/live_telemetry.json",
+    "./live_telemetry.json"
+  ];
   const pullLive = async () => {{
     try {{
-      const res = await fetch("./live_telemetry.json?_cb=" + Date.now(), {{ cache: "no-store" }});
-      if (!res.ok) return;
-      const payload = await res.json();
+      let payload = null;
+      for (const ep of LIVE_ENDPOINTS) {{
+        try {{
+          const res = await fetch(ep + "?_cb=" + Date.now(), {{ cache: "no-store" }});
+          if (!res.ok) continue;
+          const data = await res.json();
+          if (data && data.items && Object.keys(data.items).length > 0) {{
+            payload = data;
+            break;
+          }}
+        }} catch (_) {{}}
+      }}
       if (!payload || !payload.items) return;
       if (payload.updated_ts && payload.updated_ts === lastTs) return;
       lastTs = payload.updated_ts || Date.now();

@@ -1,6 +1,18 @@
-# WoW: Forever Auction Tracker & Transmute Analytics
+# Goblin Broker: Forever (`v3.0`) — WoW: Forever EU Horde Suite
 
-Локальный трекер аукциона и аналитика трансмутаций/крафта для **World of Warcraft: Forever** на Python 3.11+ и SQLite.
+Экосистема для анализа и торговли на аукционе **World of Warcraft: Forever (EU Орда)** с нулевым риском бана Blizzard ToS:
+1. **Web-дэшборд (Live):** [dremesnik.github.io/wow-auction-scanner](https://dremesnik.github.io/wow-auction-scanner/)
+2. **Игровой аддон (`addon/ForeverSniper/`):** двухрежимный **Снайпер + Сканер рынка** в стиле Modern Obsidian (`Inter`, `NoSnap` 9-slice, двойные бинды, 3-этапная стат. модель).
+3. **Desktop-компаньон (`desktop/GoblinBrokerDesktop.exe`):** нативное Windows-приложение (`46.5 КБ`, без установки, `0% CPU` в простое) для автоматической синхронизации живых цен на общий дэшборд.
+
+## Быстрый старт для друзей (v3.0, 2 минуты)
+1. **Аддон:** скопируйте папку `addon/ForeverSniper` в `World of Warcraft\_forever_\Interface\AddOns\ForeverSniper`.
+2. **Desktop App:** скачайте и запустите **`GoblinBrokerDesktop.exe`** — установка не нужна, путь к WoW и облачный HTTPS-сервер определяются автоматически.
+3. **Готово:** сканируйте рынок в игре — при выходе с персонажа, смене альта или `/reload` анонимные цены автоматически объединяются на общем Web-дэшборде.
+
+---
+
+## Бэкенд и аналитика (Python 3.11+ / SQLite)
 
 ## Возможности
 - Хранение всех цен строго в целых числах (**медные монеты `int`**), форматирование `g / s / c` только при выводе.

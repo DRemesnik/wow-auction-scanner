@@ -111,8 +111,9 @@ baitModal:SetScript("OnDragStop", function(self)
   if f._saveModalPos then f._saveModalPos(self, "bait") end
 end)
 baitModal:SetBackdrop(FLAT_BACKDROP)
-baitModal:SetBackdropColor(0.043, 0.059, 0.098, 0.98)
-baitModal:SetBackdropBorderColor(0.92, 0.70, 0.03, 0.75)
+if NS.ApplyRoundedSurface then NS.ApplyRoundedSurface(baitModal, "panel") end
+baitModal:SetBackdropColor(0.055, 0.062, 0.086, 0.98)
+baitModal:SetBackdropBorderColor(0.95, 0.65, 0.05, 0.45)
 AttachDropShadow(baitModal, 10, 0.6)
 baitModal:Hide()
 
@@ -423,8 +424,9 @@ local baitListBox = CreateFrame("Frame", nil, baitModal, "BackdropTemplate")
 baitListBox:SetPoint("TOPLEFT", baitEditCard, "BOTTOMLEFT", 0, -10)
 baitListBox:SetPoint("BOTTOMRIGHT", -14, 14)
 baitListBox:SetBackdrop(FLAT_BACKDROP)
-baitListBox:SetBackdropColor(0.055, 0.078, 0.125, 1)
-baitListBox:SetBackdropBorderColor(0.14, 0.20, 0.30, 1)
+if NS.ApplyRoundedSurface then NS.ApplyRoundedSurface(baitListBox, "panel") end
+baitListBox:SetBackdropColor(0.072, 0.082, 0.114, 1)
+baitListBox:SetBackdropBorderColor(1, 1, 1, 0.06)
 
 local baitScroll = CreateFrame("ScrollFrame", "ForeverSniperBaitScroll", baitListBox, "UIPanelScrollFrameTemplate")
 baitScroll:SetPoint("TOPLEFT", 6, -6)

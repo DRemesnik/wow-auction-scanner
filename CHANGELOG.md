@@ -4,6 +4,22 @@
 
 ---
 
+## [3.0.0.33] — 2026-11-28
+### Major Release: Modern Obsidian UI, Dual-Mode Scanner, Native Desktop Companion & Crowdsourced Live Cloud (0% Ban Risk)
+- **Goblin Broker: Desktop (`desktop/GoblinBrokerDesktop.exe`, `46.5 КБ`, без установки):**
+  - Автономное нативное Windows-приложение (.NET 4.x, встроенная иконка гоблина) в фирменном безрамочном стиле **Goblin Broker Obsidian** (`#0E1016`, 3 KPI-плитки, кастомные переключатели, трей, автозапуск с Windows).
+  - `0% CPU` в простое через системный `FileSystemWatcher`, строгое чтение `SavedVariables\ForeverSniper.lua` (`FileAccess.Read`, `FileShare.ReadWrite`), автопоиск папки WoW на дисках `C:`–`E:`.
+  - Встроенный **Privacy Self-Audit** (отправляются только анонимные рыночные цены/объёмы; ники, аккаунт, золото, пресеты и бинды полностью отбрасываются).
+  - Боевой HTTPS-сервер вшит по умолчанию — друзьям не нужны Git, GitHub или ручные настройки.
+- **Облачный Cloudflare Worker (`cloudflare-worker/`):**
+  - Бесплатный HTTPS-шлюз (`POST /ingest`, `GET /live_telemetry.json`) на Cloudflare Workers + KV с серверным Privacy Audit и автоматическим слиянием сканов всех друзей по самому свежему `updatedAt`.
+  - Web-дэшборд (`src/tracker/dashboard.py`) подтягивает объединённые живые данные напрямую с Cloudflare Worker (с автоматическим резервом на `./live_telemetry.json`) и отображает свежесть `LIVE`, `Ресет +15%`, `Sniper Score` и `Надёжность %`.
+- **Игровой аддон `Goblin Broker: Forever` — Modern Obsidian & Dual-Mode (`[ Снайпер | Сканер ]`):**
+  - Новый 9-slice движок скругления без пиксельных артефактов (`NoSnap` 128×128 TGA), встроенный шрифт `Inter` (`Inter-Medium`/`Inter-Bold`), контрастные глубокие обсидиановые Hero-кнопки (`Охота`, `СКАНИРОВАТЬ СПИСОК`) и кастомные иконки (`sniper_scope.tga`, `radar_scan.tga`).
+  - Полноценная рабочая область **Сканера рынка** + компактный **Мини-Сканер (`184px`)** + широкое окно **«Детальный просмотр рынка» (`920×520`)** с 3 KPI, 5 фильтрами, живым поиском, 10 сортируемыми колонками с тултипами и экспортом CSV.
+  - 3-этапная статистическая модель с живым ETA (`Обязательный скан → Стат. модель → Полировка деталей`), устойчивый `robustFloor`, анти-шум `vDrain`, стены `+10%/+15%`, `resetCost15`, `sniperScore`, `confidence` (0–100%) и исправленный throttle-резонанс на последнем предмете.
+  - Поддержка двойных биндов (`ОСНОВНАЯ` + `ВТОРИЧНАЯ`) в `Keybinds.lua` и защита кнопок при закрытом окне аукциона.
+
 ## [2.5.0.31] — 2026-11-28
 ### Best-in-Class Architecture, Live Auto-Calibration & Deal Card 2.0 (100% ToS PASS, 0% Ban Risk)
 - **Модульная архитектура (снят потолок Lua 5.1 — `220 → ~145` peak locals, `ForeverSniper.lua` `-1030` строк):**
