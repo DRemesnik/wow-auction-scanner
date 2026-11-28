@@ -1122,7 +1122,7 @@ def render_dashboard_html(data: dict) -> str:
           <span class="live-dot"></span>
           <span class="mono">{html.escape(str(snap_time)[:19].replace('T', ' '))} UTC</span>
         </div>
-        <div class="live-pill" id="addonLiveBadge" style="display:none; border-color:rgba(52,211,153,.45); background:rgba(16,185,129,.12); color:#34D399;" title="Живая телеметрия из аддона Goblin Broker: Forever"></div>
+        <div class="live-pill" id="addonLiveBadge" style="display:none; cursor:pointer; border-color:rgba(52,211,153,.45); background:rgba(16,185,129,.12); color:#34D399;" title="Живая телеметрия из аддона Goblin Broker: Forever — клик для фильтрации LIVE-позиций"></div>
       </div>
     </header>
 
@@ -1183,6 +1183,7 @@ def render_dashboard_html(data: dict) -> str:
         </div>
         <div class="controls" style="margin-bottom:12px;">
           <button class="btn" id="onlyFavsBtn">★ Избранное (<span id="favCount">0</span>)</button>
+          <button class="btn" id="onlyLiveBtn" style="display:none; border-color:rgba(52,211,153,.45); color:#34D399;">● LIVE (<span id="liveCount">0</span>)</button>
           <button class="btn" id="onlyCraftableBtn">Только крафтовые</button>
           <button class="btn" id="onlySignalsBtn">Только сигналы</button>
           <button class="btn" id="onlyProfitBtn">Только выгодные</button>
@@ -1238,6 +1239,7 @@ def render_dashboard_html(data: dict) -> str:
               <div class="insp-kv"><div class="insp-k">Профит (-5%)</div><div class="insp-v pos" id="inspProfit">—</div></div>
               <div class="insp-kv"><div class="insp-k">Ликвидность</div><div class="insp-v" id="inspLiq">—</div></div>
             </div>
+            <div id="inspLiveBox" style="display:none; margin-top:10px; padding:9px 11px; border-radius:8px; background:rgba(16,185,129,0.08); border:1px solid rgba(52,211,153,0.28); font-size:11.5px; line-height:1.55;"></div>
           </div>
         </div>
       </section>
@@ -1270,6 +1272,7 @@ const HISTORY = {history_json};
 let currentView = "overview";
 let currentQuery = "";
 let onlyFavs = false;
+let onlyLive = false;
 let onlyCraftable = false;
 let onlySignals = false;
 let onlyProfit = false;
@@ -1363,6 +1366,40 @@ function drawDynamicsChart(item) {{
   pEl.className = "insp-v " + (item.craft_profit > 0 ? "pos" : item.craft_profit < 0 ? "neg" : "");
   document.getElementById("inspLiq").textContent = `${{item.liquidity}} (${{item.avail}} шт / ${{item.samples}} лот.)`;
 
+  const liveBox = document.getElementById("inspLiveBox");
+  if (liveBox) {{
+    if (item._live || item._sale) {{
+      const rows = [];
+      if (item._live) {{
+        const lv = item._live;
+        let deltaHtml = "";
+        if (lv.p1 > 0 && item._api_min > 0) {{
+          const dp = ((lv.p1 - item._api_min) / item._api_min) * 100;
+          if (Math.abs(dp) >= 0.5) {{
+            const dc = dp < 0 ? "#34D399" : "#F59E0B";
+            deltaHtml = ` <span class="mono" style="color:${{dc}};font-weight:700;">(${{dp > 0 ? "+" : ""}}${{dp.toFixed(1)}}% к API)</span>`;
+          }}
+        }}
+        const p2Txt = lv.p2 && lv.p2 !== lv.p1 ? ` · 2-й ур.: <b class="mono">${{fmtCoinsHtml(lv.p2)}}</b>` : "";
+        if (lv.p1 > 0) rows.push(`<div><span style="color:#34D399;font-weight:700;">● LIVE АХ:</span> <b class="mono">${{fmtCoinsHtml(lv.p1)}}</b>${{deltaHtml}}${{p2Txt}}</div>`);
+        const micro = [];
+        if (lv.vDrain > 0) micro.push(`Выкуп/ч: <b class="mono" style="color:#34D399;">${{lv.vDrain}}</b>`);
+        if (lv.wallQty > 0) micro.push(`Стена: <b class="mono">${{lv.wallQty}}</b>/${{lv.totalDepth || lv.wallQty}}`);
+        if (lv.dips > 0) micro.push(`Просадки: <b class="mono" style="color:#FBBF24;">${{lv.dips}}</b>`);
+        if (lv.winRate != null) micro.push(`WR: <b class="mono" style="color:#38BDF8;">${{lv.winRate}}%</b>`);
+        if (lv.scans > 0) micro.push(`Сканов: <b class="mono">${{lv.scans}}</b>`);
+        if (micro.length) rows.push(`<div style="color:var(--muted);">${{micro.join(" · ")}}</div>`);
+      }}
+      if (item._sale && item._sale.avgSellNet > 0) {{
+        rows.push(`<div style="color:#C4B5FD;">Почта (подтв. продажи): <b class="mono">${{fmtCoinsHtml(item._sale.avgSellNet)}}</b> чист. · ${{item._sale.qty}} шт (${{item._sale.deals}} сд.)</div>`);
+      }}
+      liveBox.innerHTML = rows.join("");
+      liveBox.style.display = rows.length ? "block" : "none";
+    }} else {{
+      liveBox.style.display = "none";
+    }}
+  }}
+
   window._activeInspectorItem = item;
   const legend = document.getElementById("chartLegend");
   const last = pts[pts.length - 1];
@@ -1396,6 +1433,7 @@ function drawDynamicsChart(item) {{
   }}
 
   const prices = pts.flatMap(p => [p[1], p[2], p[3]]);
+  if (item._live && item._live.p1 > 0) prices.push(item._live.p1);
   const rawMin = Math.min(...prices), rawMax = Math.max(...prices);
   const padP = Math.max(1, Math.round((rawMax - rawMin) * 0.12));
   const minP = Math.max(0, rawMin - padP), maxP = rawMax + padP;
@@ -1497,7 +1535,18 @@ function drawDynamicsChart(item) {{
     return `<rect class="hit-zone" data-idx="${{i}}" x="${{x - hw / 2}}" y="0" width="${{hw}}" height="255" fill="transparent" style="cursor:crosshair;" />`;
   }}).join("");
 
-  svg.innerHTML = defs + gridLines + sepLine + availBars + spreadBand + `<path d="${{areaPath}}" fill="url(#minGrad)" />` + medPath + p25Path + minPath + dots + labels + hoverLine + hitZones;
+  let liveOverlaySvg = "";
+  if (item._live && item._live.p1 > 0) {{
+    const ly = yAt(item._live.p1);
+    const lx = xAt(pts.length - 1);
+    liveOverlaySvg =
+      `<line x1="${{OX}}" y1="${{ly}}" x2="${{OX + W}}" y2="${{ly}}" stroke="#34D399" stroke-width="1.3" stroke-dasharray="4,3" opacity="0.85" />` +
+      `<circle cx="${{lx}}" cy="${{ly}}" r="7" fill="rgba(52,211,153,0.22)" />` +
+      `<circle cx="${{lx}}" cy="${{ly}}" r="4" fill="#34D399" stroke="#080B12" stroke-width="1.5" />` +
+      `<text x="${{OX + W - 4}}" y="${{Math.max(OY + 10, ly - 6)}}" fill="#34D399" font-size="10" font-weight="700" font-family="Fira Code, monospace" text-anchor="end">LIVE</text>`;
+  }}
+
+  svg.innerHTML = defs + gridLines + sepLine + availBars + spreadBand + `<path d="${{areaPath}}" fill="url(#minGrad)" />` + medPath + p25Path + minPath + dots + liveOverlaySvg + labels + hoverLine + hitZones;
 
   svg.querySelectorAll(".hit-zone").forEach(zone => {{
     zone.addEventListener("mouseenter", () => {{
@@ -1551,6 +1600,7 @@ function renderTable() {{
       ? (currentView !== "signals" || ["КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"].includes(it.signal))
       : (currentView === "overview" ? it.group !== "Весь рынок" : it.group === currentView)) &&
     (!onlyFavs || FAVORITES.has(it.item_id)) &&
+    (!onlyLive || (it._live && it._live.p1 > 0)) &&
     (!onlyCraftable || it.is_craftable) &&
     (!onlySignals || ["КРАФТИТЬ", "СКУПКА", "ВЫГОДНО"].includes(it.signal)) &&
     (!onlyProfit || (it.craft_profit !== null && it.craft_profit > 0)) &&
@@ -1579,7 +1629,7 @@ function renderTable() {{
       <td class="mono num"><b style="color:${{it.score >= 65 ? 'var(--pos)' : it.score >= 45 ? 'var(--accent)' : 'var(--muted)'}}">${{it.score}}</b></td>
       <td>${{signalBadge(it.signal)}}</td>
       <td style="color:var(--muted);">${{it.liquidity}}</td>
-      <td class="mono num"><b>${{fmtCoinsHtml(it.current_min)}}</b>${{it._live && it._live.p1 > 0 ? `<span style="display:inline-block;margin-left:5px;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(16,185,129,.16);color:#34D399;border:1px solid rgba(52,211,153,.35);vertical-align:middle;" title="Живая цена из аддона${{it._live.vDrain ? ' · Выкуп/ч: ' + it._live.vDrain : ''}}${{it._live.dips ? ' · Просадки: ' + it._live.dips : ''}}">LIVE</span>` : ''}}</td>
+      <td class="mono num"><b>${{fmtCoinsHtml(it.current_min)}}</b>${{(() => {{ if (!it._live || !(it._live.p1 > 0)) return ''; const dp = it._api_min > 0 ? ((it._live.p1 - it._api_min) / it._api_min) * 100 : 0; const dTxt = Math.abs(dp) >= 1 ? ` <span style="font-size:10px;color:${{dp < 0 ? '#34D399' : '#F59E0B'}};">${{dp > 0 ? '+' : ''}}${{Math.round(dp)}}%</span>` : ''; return `<span style="display:inline-block;margin-left:5px;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(16,185,129,.16);color:#34D399;border:1px solid rgba(52,211,153,.35);vertical-align:middle;" title="Живая цена из аддона${{it._live.vDrain ? ' · Выкуп/ч: ' + it._live.vDrain : ''}}${{it._live.dips ? ' · Просадки: ' + it._live.dips : ''}}${{it._live.winRate != null ? ' · WR: ' + it._live.winRate + '%' : ''}}">LIVE</span>${{dTxt}}`; }})()}}</td>
       <td class="mono num" style="color:var(--muted);">${{fmtCoinsHtml(it.p25)}}</td>
       <td class="mono num" style="color:var(--muted);">${{fmtCoinsHtml(it.craft_cost)}}</td>
       <td class="num ${{it.craft_profit > 0 ? 'pos' : it.craft_profit < 0 ? 'neg' : 'mono'}}">${{fmtCoinsHtml(it.craft_profit)}}</td>
@@ -1872,6 +1922,10 @@ renderTable();
       }}
 
       const badge = document.getElementById("addonLiveBadge");
+      const liveBtn = document.getElementById("onlyLiveBtn");
+      const liveCnt = document.getElementById("liveCount");
+      if (liveCnt) liveCnt.textContent = String(matched);
+      if (liveBtn && matched > 0) liveBtn.style.display = "inline-flex";
       if (badge && payload.updated_ts) {{
         const ageMin = Math.max(0, Math.floor((Date.now() / 1000 - payload.updated_ts) / 60));
         const ageTxt = ageMin < 1 ? "только что" : ageMin < 60 ? `${{ageMin}}м назад` : `${{Math.floor(ageMin / 60)}}ч назад`;
@@ -1885,6 +1939,23 @@ renderTable();
       }}
     }} catch (_e) {{}}
   }};
+
+  const toggleLiveFilter = (scrollToTable) => {{
+    onlyLive = !onlyLive;
+    const btn = document.getElementById("onlyLiveBtn");
+    if (btn) btn.classList.toggle("active", onlyLive);
+    if (onlyLive && currentView !== "ALL" && currentView !== "overview") {{
+      currentView = "ALL";
+    }}
+    renderLimit = 200;
+    renderTable();
+    if (scrollToTable) {{
+      document.getElementById("explorerSection")?.scrollIntoView({{ behavior: "smooth", block: "start" }});
+    }}
+  }};
+  document.getElementById("onlyLiveBtn")?.addEventListener("click", () => toggleLiveFilter(false));
+  document.getElementById("addonLiveBadge")?.addEventListener("click", () => toggleLiveFilter(true));
+
   pullLive();
   setInterval(pullLive, 60000);
 }})();
