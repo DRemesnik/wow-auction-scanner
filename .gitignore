@@ -6,3 +6,7 @@ data/dashboard.html
 data/live_telemetry.json
 !data/.gitkeep
 .pytest_cache/
+
+# Cloudflare Wrangler local cache
+.wrangler/
+
